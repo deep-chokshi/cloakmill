@@ -1,82 +1,111 @@
-# Claude PR review
+# Claude code and security review
 
-[claude-review.yml](../../.github/workflows/claude-review.yml) runs the official
-[Claude Code Action](https://github.com/anthropics/claude-code-action), pinned to a
-commit. It uses Anthropic API billing and the job-scoped `GITHUB_TOKEN`; it does
-not depend on the separate hosted Claude review queue or its app-token exchange.
+[claude-review.yml](../../.github/workflows/claude-review.yml) runs two review
+commands through the pinned official Claude Code Action. It uses Anthropic API
+billing, independently of the separate hosted Claude Code Review service.
 
-## Enable it
-
-1. Open [repository Actions secrets](https://github.com/deep-chokshi/cloakmill/settings/secrets/actions).
-2. Choose **New repository secret**. Set the name to `ANTHROPIC_API_KEY` and the
-   value to your Anthropic API key. Use a **secret**, not an Actions variable.
-   The Anthropic account needs API access and available credit. Never paste the
-   key into a PR, issue, source file, or chat.
-3. Review and merge the workflow setup PR when ready. Manual dispatch becomes
-   available after the workflow reaches `main`. This does not merge the UI PR.
-4. Open **Actions → Claude review → Run workflow**. Select `main`, enter `1` in
-   `pr_number` to review the existing UI prototype PR, and run it once.
-
-After activation, ready PRs from branches in this repository run automatically
-when opened, updated, reopened, or marked ready. Drafts and forks are excluded;
-the action also checks actor permissions and rejects bots by default. A manual
-run validates that its target is an open, ready PR from this repository. No
-`@claude` comment is required. Avoid sending duplicate requests to the separate
-hosted integration while this workflow reviews the same change.
+| Stage | Behavior | GitHub permission |
+| --- | --- | --- |
+| Code analysis | `/code-review high <base>...<head>`; verify correctness findings | Read only |
+| Security analysis | `/security-review`; trace exploit paths and filter false positives | Read only |
+| Result transfer | Extract schema-validated findings from the SDK result; retain bundle for one day | Artifact upload |
+| Publish and gate | Validate both results and revisions; post a neutral GitHub review with inline findings | PR write |
 
 ```mermaid
 flowchart LR
-    PR[Ready PR or manual PR number] --> Check[Validate target and API secret]
-    Check --> Source[Read base and immutable head snapshot]
-    Source --> Claude[Claude source review]
-    Claude --> Comment[PR result with head SHA and run link]
-    Comment --> Verify[Require explicit completion comment]
-    Verify --> Human[Verify findings and decide next action]
+    PR[Ready PR / manual PR number] --> Target[Validate target and exact revisions]
+    Target --> C[Code review command]
+    C --> S[Security review command]
+    S --> JSON[Structured result bundle]
+    JSON --> Validate[Separate publisher validates results and current PR]
+    Validate --> Review[GitHub review + inline findings]
+    Review --> Gate{Both complete and no findings?}
+    Gate -->|Yes| Pass[Pass]
+    Gate -->|No| Fail[Fail with review details]
 ```
 
-## What it does
+## Setup and reruns
 
-The reviewer inspects source and posts one summary identifying the reviewed head,
-concrete findings with file/line references, and review limits. Its prompt
-distinguishes fictional Step 1 prototype behavior from production requirements.
-It does not run project tests or fix code; the existing CI workflow checks code
-independently. Findings require human verification. The workflow cannot push code
-with its read-only contents token and does not approve or merge PRs.
+1. Add `ANTHROPIC_API_KEY` under [Settings → Secrets and variables → Actions → Repository secrets](https://github.com/deep-chokshi/cloakmill/settings/secrets/actions).
+   Use a **secret**, not an Actions variable. The account needs API access and
+   credit. Never paste the key into source, a PR, issue, or chat.
+2. Review and merge the workflow setup PR when ready. No PR is merged by this
+   automation. After the workflow reaches `main`, manual dispatch is available.
+3. Select **Actions → Claude review → Run workflow**, choose `main`, and enter
+   the target `pr_number` (`1` for the existing UI prototype PR).
 
-Each run has a 20-minute timeout, a 24-turn limit, and a USD 5 estimated API spend
-limit using the `sonnet` alias. The estimate is not an exact billing cap; set
-appropriate controls in the Anthropic account too. New runs for the same PR
-cancel superseded runs. Canceled, timed-out, or budget-limited reviews are
-incomplete, even if some feedback was already posted.
+Ready, same-repository PRs run automatically on opening, new commits, reopening,
+or being marked ready. Drafts and forks are excluded. The official action checks
+actor permissions and rejects bots by default. No `@claude` comment is needed.
+To repeat a current-head run, use **Re-run all jobs**. A new commit starts a new
+review automatically. Re-running an old event after the PR changes is rejected.
 
-Full model output is disabled. Hooks are disabled and model tools are limited to
-reading source and PR inspection/comment commands; these controls do not remove
-all prompt-injection risks. Same-repository review is intended for trusted
-contributors. Fork contributions need a separately designed review path. Never
-change this to `pull_request_target` with an untrusted head checkout.
+The analysis job is named **Analyze code and security**. The blocking result is
+**Publish and gate code and security review**. Repository rules can require this
+check; this change does not edit branch-protection settings.
 
-This is a connected **development service**: repository content is sent to
-Anthropic. It is separate from CloakMill's intended offline processing runtime.
-Only synthetic data belongs in this repository.
+## Review contract
 
-## Read the result and diagnose failures
+The commands run at the exact head commit. The security command's `origin/HEAD`
+is pinned to the PR base, including when the PR targets a branch other than
+`main`. Controls come from the workflow revision, and product guidance comes
+from the base revision. PR-authored project settings are not loaded; hooks are
+disabled. No `--fix` or `--comment` flag is passed. Source inspection tools and
+read-only git/PR commands are available; project scripts are not executed.
 
-Find the run under **Actions → Claude review** and its linked PR comment. The
-comment must name the current head SHA and contain `Review-Result: findings` or
-`Review-Result: no-actionable-findings`. A successful job means an explicit result
-was posted, and may still contain actionable findings. It is not an approval or
-proof of correctness. No comment, an incomplete comment, or an old-head comment
-is not a completed review of the current code.
+Both passes return a bounded JSON result using `--json-schema`. Findings require
+a severity, confidence of at least 0.8, explanation, concrete evidence or exploit
+scenario, recommendation, and an added-line source anchor. Security findings
+must be medium impact or higher. Candidate findings are checked against source
+and filtered before reporting. The prompt distinguishes the fictional Step 1 UI
+from a production privacy engine.
 
-| Symptom | Action |
+The collector extracts only the SDK's `structured_output` from a successful
+result. A plain assistant reply, budget error, permission denial, missing output,
+or failed action is incomplete. Raw sessions and credentials are not uploaded.
+Each pass is extracted immediately because the official action reuses its
+execution-file path between invocations.
+
+The publisher checks target identity, current base/head, schema, completion, full
+changed-file inventory, and added-line anchors. It posts with `event: COMMENT`,
+never approval or merge, and reads the review back to confirm publication.
+Duplicate findings share an inline comment; publication is idempotent within
+one run attempt. A base/head change requires a new review.
+
+The review includes both pass statuses, reviewed SHAs, run link, limitations,
+and one of `Review-Result: no-actionable-findings`, `findings`, or `incomplete`.
+Only two complete passes without findings pass the gate. Findings require human
+verification and a subsequent fix or documented false-positive decision; an
+invalid or incomplete result cannot become a clean review. AI review can miss
+defects and does not guarantee security. Python/package tests run independently.
+
+## Cost, scope, and diagnosis
+
+Each pass uses the `sonnet` alias, a 48-turn limit, and a USD 5 estimated API spend
+limit. The analysis job times out after 35 minutes and publishing after five.
+The two-pass estimate can exceed USD 10 because the client estimate is not an
+exact billing cap; configure Anthropic account controls too. New runs cancel
+superseded runs for the same PR. Canceled or timed-out reviews are incomplete.
+
+This connected development service sends repository content to Anthropic. It
+does not alter CloakMill's intended offline runtime. Only synthetic data belongs
+in this repository. The workflow is for trusted contributors; a fork-review
+path needs its own design. Do not replace the trigger with `pull_request_target`
+and check out an untrusted head with secrets.
+
+| Symptom | Diagnosis |
 | --- | --- |
-| `Check API secret` fails | Add the repository Actions secret with the exact name above. |
-| Anthropic authentication or billing fails | Check the key's API access, workspace, credit, and account limits. Rerun after correcting it. |
-| Posting a comment is denied | Check repository/organization Actions policies allow the workflow's `pull-requests: write` permission. |
-| Workflow is absent from the Actions menu | Merge the setup workflow to `main`; manual dispatch requires it on the default branch. |
-| Job is skipped | Check draft/fork status and the triggering actor. |
-| No explicit result or the head changed | Inspect the run failure, then rerun against the current head. Do not assume a clean review. |
-| A separate Claude app check stays queued | Inspect this Actions run independently; this workflow does not repair the hosted review service. |
+| Secret check fails | Add the exact repository Actions secret named above. |
+| Anthropic authentication/billing failure | Check key access, workspace, credit, and account limits. |
+| Analysis ran but gate fails | Read both statuses in the PR review; findings or incomplete results fail intentionally. |
+| No structured result / permission denial | Inspect the corresponding command step. Do not infer a completed review from session success. |
+| GitHub publication error | Check PR-write permission and organization Actions policies. |
+| Changed revision error | Start a review for the new PR base/head. |
+| Workflow absent from Actions menu | Manual dispatch needs the workflow on `main`. |
+| Separate Claude app check remains queued | This workflow does not repair the hosted service's queue. |
 
-Dependency updates for pinned actions are proposed by the existing Dependabot
-configuration. Review those updates before merging them.
+References: [Anthropic GitHub Actions](https://code.claude.com/docs/en/github-actions),
+[`/code-review`](https://code.claude.com/docs/en/code-review-local),
+[security review](https://support.claude.com/en/articles/11932705-automated-security-reviews-in-claude-code),
+[structured outputs](https://code.claude.com/docs/en/agent-sdk/structured-outputs),
+and [official security-review guidance](https://github.com/anthropics/claude-code-security-review).

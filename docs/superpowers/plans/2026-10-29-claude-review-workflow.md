@@ -6,6 +6,8 @@
 
 **Architecture:** A single workflow validates PR metadata, checks out base and head snapshots, invokes the official action, and verifies that a result comment was published. Setup and operational limits belong in development documentation.
 
+The initial implementation below is superseded by the structured-review revision in the design spec. The owner configured the API key; a live run exposed permission denials and no posted result. The revised implementation runs the bundled code and security commands, transfers structured results, and publishes through a separate job.
+
 **Tech Stack:** GitHub Actions YAML, GitHub CLI, jq, official Claude Code Action, actionlint.
 
 ---
@@ -20,3 +22,11 @@
 Local verification: actionlint 1.7.12 passed; 24 synthetic scenarios executed the actual workflow shell steps, covering target acceptance/rejection, missing/present secrets, explicit result requirements, and a head change during review. `make check` and `make build` passed. No live Anthropic review was attempted because the API secret was absent.
 
 Delivery: [draft setup PR #2](https://github.com/deep-chokshi/cloakmill/pull/2). [Hosted CI](https://github.com/deep-chokshi/cloakmill/actions/runs/40766146908) passed on Python 3.12 and 3.13 for implementation commit `3241f97`. The Claude job correctly skipped the draft; this is not a live review result. The existing monitor's prompt now recognizes the setup PR and its owner-controlled activation, preserving its already-paused status.
+
+## Structured-review revision
+
+- [x] Write failing publisher and SDK-result regression tests, then implement the validated result collector and GitHub review publisher under `.github/scripts/`.
+- [x] Run `/code-review` and `/security-review` separately using `--json-schema`, read-only analysis credentials, exact base/head context, and explicit prototype scope.
+- [x] Transfer only structured findings to a separate PR-write job; publish a neutral review with validated inline anchors and fail on findings or incomplete results.
+- [x] Run the publisher tests in foundation CI, update development documentation, and validate YAML, Python lint/format, tests, and build locally.
+- [ ] Push the fix on PR #2 and verify a live rerun completes both review commands and publishes the current-head GitHub review. Verify findings against source and fix genuine defects before declaring the check clear.
