@@ -34,6 +34,10 @@ The repository is private initially; cloning requires access granted by its owne
 
 ## Development connectivity versus product deployment
 
+Optional [Claude PR review](claude-review.md) uses GitHub Actions and an
+owner-supplied Anthropic API secret. See that guide for activation, manual
+reviews, cost limits, and troubleshooting.
+
 Initial dependency resolution and installation use package indexes. This development workflow is not an air-gapped installer. The product deployment goal requires a separately built offline bundle containing approved dependencies, models, OCR assets, and licenses, followed by installation and execution checks with external networking disabled.
 
 ## Local data
