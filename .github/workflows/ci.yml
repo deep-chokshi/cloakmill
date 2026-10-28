@@ -24,7 +24,6 @@ jobs:
         python: ["3.12", "3.13"]
     env:
       UV_PYTHON: ${{ matrix.python }}
-      CLOAKMILL_WHEEL_ENV: ${{ runner.temp }}/cloakmill-wheel
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,6 +48,8 @@ jobs:
       - name: Build wheel and source distribution
         run: uv build --no-sources
       - name: Verify wheel in a clean environment
+        env:
+          CLOAKMILL_WHEEL_ENV: ${{ runner.temp }}/cloakmill-wheel
         run: |
           uv venv "$CLOAKMILL_WHEEL_ENV" --python "${{ matrix.python }}"
           uv pip install --python "$CLOAKMILL_WHEEL_ENV/bin/python" --no-index dist/*.whl
