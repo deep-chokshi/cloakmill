@@ -11,6 +11,13 @@ Apache-2.0 permits commercial use, modification, and redistribution subject to i
 - Synthetic examples committed here are fictional project examples, distributed under the repository license.
 - This foundation does not bundle a third-party model or an inference runtime.
 
+## Prototype fonts
+
+The workspace prototype bundles unmodified IBM Plex Sans and Instrument Serif font files under the **SIL Open Font License 1.1**, separately from the Apache-2.0 project code. Their original notices are included beside the files:
+
+- [IBM Plex Sans notice](../prototypes/workspace/assets/fonts/IBMPlexSans-OFL.txt); source: [Google Fonts / IBM Plex Sans](https://github.com/google/fonts/tree/main/ofl/ibmplexsans).
+- [Instrument Serif notice](../prototypes/workspace/assets/fonts/InstrumentSerif-OFL.txt); source: [Google Fonts / Instrument Serif](https://github.com/google/fonts/tree/main/ofl/instrumentserif).
+
 ## Contributions
 
 Unless explicitly stated otherwise, contributions intentionally submitted for inclusion in CloakMill are contributed under Apache-2.0. This repository does not require a separate contributor license agreement or Developer Certificate of Origin sign-off.

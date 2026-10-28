@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="A fictional, interactive CloakMill workspace prototype for product-design review."
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'"
+    />
+    <title>CloakMill — Workspace prototype</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23101d19'/%3E%3Cpath d='M17 8H8v16h9M13 8v16M13 16h11M24 8v16' stroke='%23cef294' fill='none' stroke-width='3'/%3E%3C/svg%3E"
+    />
+    <link
+      rel="preload"
+      href="./assets/fonts/IBMPlexSans-Variable.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="./assets/fonts/InstrumentSerif-Regular.ttf"
+      as="font"
+      type="font/ttf"
+      crossorigin
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.mjs"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to workspace</a>
+    <div id="app"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <dialog id="project-dialog" class="modal">
+      <form id="project-form" novalidate>
+        <div class="modal-heading">
+          <span class="eyebrow">A fresh workspace</span
+          ><button
+            class="icon-button"
+            type="button"
+            data-action="close-dialog"
+            aria-label="Close project dialog"
+          >
+            ×
+          </button>
+        </div>
+        <h2>Create a demo project</h2>
+        <p>A small, empty workspace to try the complete journey.</p>
+        <label class="field-label" for="project-name">Project name</label>
+        <input
+          id="project-name"
+          name="projectName"
+          class="text-input"
+          maxlength="64"
+          placeholder="e.g. Research pilot"
+          autocomplete="off"
+          aria-describedby="project-error"
+        />
+        <p id="project-error" class="field-error" role="alert"></p>
+        <div class="note">
+          This prototype keeps one project in this tab. Creating a project
+          replaces the current demo workspace. No real files are accepted.
+        </div>
+        <div class="modal-actions">
+          <button
+            class="button secondary"
+            type="button"
+            data-action="close-dialog"
+          >
+            Cancel</button
+          ><button class="button primary" type="submit">
+            Create demo project
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="reset-dialog" class="modal compact">
+      <span class="eyebrow">Start again</span>
+      <h2>Reset the demo?</h2>
+      <p>
+        This clears decisions and sample releases from this tab and restores the
+        original fictional workspace.
+      </p>
+      <div class="modal-actions">
+        <button class="button secondary" data-action="close-dialog">
+          Keep working</button
+        ><button class="button primary" data-action="confirm-reset">
+          Reset demo
+        </button>
+      </div>
+    </dialog>
+    <dialog id="help-dialog" class="modal">
+      <div class="modal-heading">
+        <span class="eyebrow">Step 1 / product design</span
+        ><button
+          class="icon-button"
+          data-action="close-dialog"
+          aria-label="Close prototype guide"
+        >
+          ×
+        </button>
+      </div>
+      <h2>A workspace to explore.</h2>
+      <p>
+        Every record, identity, processing result, and validation result here is
+        authored fictional sample content. This is a clickable UX prototype.
+      </p>
+      <ol class="guide-list">
+        <li>Review the two identity decisions.</li>
+        <li>Exclude the unsupported encrypted sample in Sources.</li>
+        <li>Freeze a replacement profile.</li>
+        <li>Inspect the preview, validate, and create a sample release.</li>
+      </ol>
+      <div class="note">
+        There is no backend, authentication, real-file import, detection engine,
+        or production privacy assessment. All changes live in memory for this
+        tab. Reloading restores the sample.
+      </div>
+      <div class="modal-actions">
+        <button class="button primary" data-action="close-dialog">
+          Explore the workspace
+        </button>
+      </div>
+    </dialog>
+    <noscript
+      >This interactive design prototype requires JavaScript. Its data is
+      entirely fictional.</noscript
+    >
+  </body>
+</html>
