@@ -1,9 +1,12 @@
 """Behavioral tests for the review publisher; no model or network is used."""
 
 import copy
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from claude_review import ReviewError, extract_result, publish_review
+from claude_review import ReviewError, extract_result, package_results, publish_review
 
 REPO = "example-org/example-repo"
 HEAD = "b" * 40
@@ -95,6 +98,64 @@ class FakeGitHub:
 
 
 class ReviewPublisherTests(unittest.TestCase):
+    def test_a_completed_json_claim_without_running_the_command_is_rejected(self):
+        messages = [
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "structured_output": result("code"),
+            }
+        ]
+        self.assertEqual(extract_result(messages, "success", "code-review")["outcome"], "failure")
+
+    def test_command_invocation_and_successful_return_are_required(self):
+        messages = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Skill",
+                            "id": "review-call",
+                            "input": {"skill": "code-review", "args": "high base...head"},
+                        }
+                    ]
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "review-call", "content": "Report"}
+                    ]
+                },
+            },
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "structured_output": result("code"),
+            },
+        ]
+        self.assertEqual(extract_result(messages, "success", "code-review")["outcome"], "success")
+        messages[1]["message"]["content"][0]["is_error"] = True
+        self.assertEqual(extract_result(messages, "success", "code-review")["outcome"], "failure")
+
+    def test_missing_security_file_packages_as_incomplete_for_visible_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "code.json").write_text(
+                json.dumps({"outcome": "success", "data": result("code")})
+            )
+            data = package_results(folder, CONTEXT)
+            self.assertEqual(data["results"]["security"]["outcome"], "failure")
+            api = FakeGitHub()
+            _, passed = publish_review(api, data, CONTEXT)
+            self.assertFalse(passed)
+            self.assertIn("Security review: incomplete", api.posts[0][1]["body"])
+
     def test_success_without_structured_findings_is_incomplete(self):
         entry = extract_result(
             [{"type": "result", "subtype": "success", "is_error": False}], "success"

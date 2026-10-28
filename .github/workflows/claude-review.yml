@@ -137,8 +137,11 @@ jobs:
           settings: '{"disableAllHooks":true}'
           claude_args: ${{ steps.controls.outputs.args }}
           prompt: |
-            /code-review high ${{ steps.target.outputs.base_sha }}...${{ steps.target.outputs.head_sha }}
-
+            First invoke the Skill tool with skill "code-review" and args
+            "high ${{ steps.target.outputs.base_sha }}...${{ steps.target.outputs.head_sha }}".
+            Wait for the bundled review to finish, then return its verified findings
+            through the JSON schema. Do not substitute a generic review prompt.
+            CI verifies that this Skill call actually ran and returned successfully.
             CI contract: run the bundled code-review command in report-only mode.
             PR ${{ steps.target.outputs.number }}, repository ${{ github.repository }}.
             Read trusted product guidance at ${{ steps.controls.outputs.guidance }}.
@@ -184,8 +187,10 @@ jobs:
           settings: '{"disableAllHooks":true}'
           claude_args: ${{ steps.controls.outputs.args }}
           prompt: |
-            /security-review
-
+            First invoke the Skill tool with skill "security-review".
+            Wait for the review to finish, then return its verified findings through
+            the JSON schema. Do not substitute a generic security review prompt.
+            CI verifies that this Skill call actually ran and returned successfully.
             CI contract: run the security-review command in report-only mode.
             PR ${{ steps.target.outputs.number }}, repository ${{ github.repository }}.
             origin/HEAD is pinned to base ${{ steps.target.outputs.base_sha }};
@@ -209,28 +214,23 @@ jobs:
             a recommendation, and a path plus added RIGHT-side line from this PR.
             Always state source-only limitations. Do not claim project tests ran.
 
+      - name: Extract security findings
+        env:
+          CLOAKMILL_EXECUTION_FILE: ${{ steps.security.outputs.execution_file }}
+          CLOAKMILL_ACTION_OUTCOME: ${{ steps.security.outcome }}
+        run: |
+          python3 "$RUNNER_TEMP/cloakmill-review-controls/claude_review.py" \
+            --collect security "$RUNNER_TEMP/claude-review-results/security.json"
+          rm -f "$RUNNER_TEMP/claude-execution-output.json"
+
       - name: Package structured results only
         env:
           CLOAKMILL_PR_NUMBER: ${{ steps.target.outputs.number }}
           CLOAKMILL_REVIEW_HEAD: ${{ steps.target.outputs.head_sha }}
           CLOAKMILL_REVIEW_BASE: ${{ steps.target.outputs.base_sha }}
         run: |
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          folder = Path(os.environ["RUNNER_TEMP"]) / "claude-review-results"
-          bundle = {
-              "repository": os.environ["GITHUB_REPOSITORY"],
-              "number": int(os.environ["CLOAKMILL_PR_NUMBER"]),
-              "head_sha": os.environ["CLOAKMILL_REVIEW_HEAD"],
-              "base_sha": os.environ["CLOAKMILL_REVIEW_BASE"],
-              "results": {kind: json.loads((folder / f"{kind}.json").read_text())
-                          for kind in ("code", "security")},
-          }
-          (folder / "bundle.json").write_text(json.dumps(bundle, allow_nan=False))
-          PY
+          python3 "$RUNNER_TEMP/cloakmill-review-controls/claude_review.py" \
+            --package "$RUNNER_TEMP/claude-review-results/bundle.json"
 
       - name: Transfer structured review bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

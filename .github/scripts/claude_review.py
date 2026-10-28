@@ -44,7 +44,7 @@ def added_lines(patch):
     return lines
 
 
-def extract_result(messages, outcome):
+def extract_result(messages, outcome, expected_command=None):
     """Use the official SDK result envelope, never an assistant's prose reply."""
     failed = {"outcome": "failure", "data": None}
     if outcome != "success" or not isinstance(messages, list):
@@ -64,7 +64,41 @@ def extract_result(messages, outcome):
         or not isinstance(final.get("structured_output"), dict)
     ):
         return failed
+    if expected_command:
+        calls = set()
+        returned = set()
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            content = message.get("message", {}).get("content", [])
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if (
+                    block.get("type") == "tool_use"
+                    and block.get("name") == "Skill"
+                    and block.get("input", {}).get("skill") == expected_command
+                ):
+                    calls.add(block.get("id"))
+                if block.get("type") == "tool_result" and not block.get("is_error"):
+                    returned.add(block.get("tool_use_id"))
+        if not (calls & returned) - {None}:
+            return failed
     return {"outcome": "success", "data": final["structured_output"]}
+
+
+def package_results(folder, context):
+    bundle = {key: context[key] for key in ("repository", "number", "head_sha", "base_sha")}
+    bundle["results"] = {}
+    for kind in ("code", "security"):
+        try:
+            value = json.loads((folder / f"{kind}.json").read_text())
+        except (OSError, ValueError):
+            value = {"outcome": "failure", "data": None}
+        bundle["results"][kind] = value
+    return bundle
 
 
 def validate_result(value, kind, head, files):
@@ -319,6 +353,7 @@ class GitHub:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--collect", choices=("code", "security"))
+    parser.add_argument("--package", action="store_true")
     parser.add_argument("bundle", type=Path)
     args = parser.parse_args()
     if args.collect:
@@ -330,7 +365,9 @@ def main():
                 messages = json.loads(source.read_text())
         except (KeyError, OSError, ValueError):
             pass
-        entry = extract_result(messages, os.environ.get("CLOAKMILL_ACTION_OUTCOME"))
+        entry = extract_result(
+            messages, os.environ.get("CLOAKMILL_ACTION_OUTCOME"), f"{args.collect}-review"
+        )
         args.bundle.write_text(json.dumps(entry, allow_nan=False))
         print(
             f"{args.collect} structured result: {entry['outcome']}; raw session was not exported."
@@ -346,6 +383,10 @@ def main():
             "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
             "server_url": os.environ["GITHUB_SERVER_URL"],
         }
+        if args.package:
+            data = package_results(args.bundle.parent, context)
+            args.bundle.write_text(json.dumps(data, allow_nan=False))
+            return 0
         bundle = json.loads(args.bundle.read_text())
         api = GitHub(os.environ["GH_TOKEN"], os.environ["GITHUB_API_URL"])
         url, passed = publish_review(api, bundle, context)

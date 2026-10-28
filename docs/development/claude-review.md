@@ -60,6 +60,13 @@ must be medium impact or higher. Candidate findings are checked against source
 and filtered before reporting. The prompt distinguishes the fictional Step 1 UI
 from a production privacy engine.
 
+Each pass invokes its review command through Claude's `Skill` tool inside the
+agent loop, then returns structured findings. Starting the prompt directly with
+`/code-review` can finish outside that loop without `structured_output`; that
+behavior was observed in the first live run. The collector requires an actual
+matching Skill call and a successful tool return, so a JSON completion claim
+without running the requested command cannot pass.
+
 The collector extracts only the SDK's `structured_output` from a successful
 result. A plain assistant reply, budget error, permission denial, missing output,
 or failed action is incomplete. Raw sessions and credentials are not uploaded.
