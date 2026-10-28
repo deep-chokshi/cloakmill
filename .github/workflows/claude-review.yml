@@ -32,8 +32,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      CLOAKMILL_CONTROL_DIR: ${{ runner.temp }}/cloakmill-review-controls
-      CLOAKMILL_RESULTS_DIR: ${{ runner.temp }}/claude-review-results
       # Model alias for every Claude stage. "opus" is the higher-quality, higher-cost option.
       CLOAKMILL_REVIEW_MODEL: sonnet
     outputs:
@@ -41,6 +39,15 @@ jobs:
       head_sha: ${{ steps.target.outputs.head_sha }}
       base_sha: ${{ steps.target.outputs.base_sha }}
     steps:
+      # The runner context is unavailable in job-level env, so later steps read
+      # these working directories from GITHUB_ENV.
+      - name: Set review working directories
+        run: |
+          {
+            echo "CLOAKMILL_CONTROL_DIR=$RUNNER_TEMP/cloakmill-review-controls"
+            echo "CLOAKMILL_RESULTS_DIR=$RUNNER_TEMP/claude-review-results"
+          } >> "$GITHUB_ENV"
+
       - name: Check API secret
         env:
           CLOAKMILL_REVIEW_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
