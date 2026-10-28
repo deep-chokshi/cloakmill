@@ -12,6 +12,24 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+STAGES = ("review", "structure")
+STAT_FIELDS = (
+    "turns",
+    "tool_calls",
+    "subagent_tool_calls",
+    "permission_denials",
+    "cost_usd",
+    "duration_ms",
+)
+BRIEF_INPUT_KEYS = {
+    "Agent": "description",
+    "Bash": "command",
+    "Glob": "pattern",
+    "Grep": "pattern",
+    "Read": "file_path",
+    "Task": "description",
+}
+
 
 class ReviewError(ValueError):
     """A controlled error that never includes model output or credentials."""
@@ -24,8 +42,15 @@ def text(value, maximum):
 
 
 def markdown(value):
-    value = html.escape(value, quote=False).replace("@", "@\u200b")
+    value = html.escape(value, quote=False).replace("@", "@​")
     return re.sub(r"([\\`*_{}\[\]()#+.!|>\-])", r"\\\1", value)
+
+
+def number(value):
+    """Return a finite number from untrusted data, or None."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        return None
+    return value
 
 
 def added_lines(patch):
@@ -44,49 +69,252 @@ def added_lines(patch):
     return lines
 
 
-def extract_result(messages, outcome, expected_command=None):
-    """Use the official SDK result envelope, never an assistant's prose reply."""
-    failed = {"outcome": "failure", "data": None}
-    if outcome != "success" or not isinstance(messages, list):
-        return failed
+def result_message(messages):
+    """Return the official SDK result envelope, never an assistant's prose reply."""
+    if not isinstance(messages, list):
+        return None
     results = [
         message
         for message in messages
         if isinstance(message, dict) and message.get("type") == "result"
     ]
-    if not results:
-        return failed
-    final = results[-1]
-    if (
-        final.get("subtype") != "success"
-        or final.get("is_error") is not False
-        or final.get("permission_denials")
-        or not isinstance(final.get("structured_output"), dict)
-    ):
-        return failed
-    if expected_command:
-        calls = set()
-        returned = set()
-        for message in messages:
-            if not isinstance(message, dict):
+    return results[-1] if results else None
+
+
+def brief_input(name, value):
+    """Describe a tool call by its target only; never copy file contents or tool results."""
+    if not isinstance(value, dict):
+        return ""
+    if name == "Skill":
+        described = f"{value.get('skill', '')} {value.get('args', '')}".strip()
+    else:
+        key = BRIEF_INPUT_KEYS.get(name)
+        described = value.get(key) if key else ""
+    return described[:200] if isinstance(described, str) else ""
+
+
+def diagnostics(messages):
+    """Summarize a session as counts and a tool-call trace, without tool output or secrets."""
+    summary = {
+        "subtype": None,
+        "is_error": None,
+        "model": None,
+        "turns": None,
+        "duration_ms": None,
+        "cost_usd": None,
+        "tool_calls": 0,
+        "subagent_tool_calls": 0,
+        "permission_denials": 0,
+        "tools": {},
+        "trace": [],
+        "denials": [],
+    }
+    if not isinstance(messages, list):
+        return summary
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if message.get("type") == "system" and message.get("subtype") == "init":
+            model = message.get("model")
+            summary["model"] = model if isinstance(model, str) else None
+        if message.get("type") != "assistant":
+            continue
+        nested = bool(message.get("parent_tool_use_id"))
+        content = message.get("message", {})
+        content = content.get("content") if isinstance(content, dict) else None
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue
-            content = message.get("message", {}).get("content", [])
-            if not isinstance(content, list):
-                continue
-            for block in content:
-                if not isinstance(block, dict):
-                    continue
-                if (
-                    block.get("type") == "tool_use"
-                    and block.get("name") == "Skill"
-                    and block.get("input", {}).get("skill") == expected_command
-                ):
-                    calls.add(block.get("id"))
-                if block.get("type") == "tool_result" and not block.get("is_error"):
-                    returned.add(block.get("tool_use_id"))
-        if not (calls & returned) - {None}:
-            return failed
-    return {"outcome": "success", "data": final["structured_output"]}
+            name = str(block.get("name"))
+            summary["tool_calls"] += 1
+            summary["subagent_tool_calls"] += int(nested)
+            summary["tools"][name] = summary["tools"].get(name, 0) + 1
+            if len(summary["trace"]) < 300:
+                scope = "sub" if nested else "main"
+                summary["trace"].append([scope, name, brief_input(name, block.get("input"))])
+    final = result_message(messages)
+    if final is None:
+        return summary
+    summary["subtype"] = final.get("subtype") if isinstance(final.get("subtype"), str) else None
+    summary["is_error"] = final.get("is_error") if isinstance(final.get("is_error"), bool) else None
+    summary["turns"] = number(final.get("num_turns"))
+    summary["duration_ms"] = number(final.get("duration_ms"))
+    summary["cost_usd"] = number(final.get("total_cost_usd"))
+    denials = final.get("permission_denials")
+    if isinstance(denials, list):
+        summary["permission_denials"] = len(denials)
+        summary["denials"] = [
+            [
+                str(denial.get("tool_name")),
+                brief_input(str(denial.get("tool_name")), denial.get("tool_input")),
+            ]
+            for denial in denials[:50]
+            if isinstance(denial, dict)
+        ]
+    return summary
+
+
+def extract_report(messages, outcome):
+    """Review stage: the result text is the command's report; it must come from a real run."""
+    summary = diagnostics(messages)
+
+    def failed(reason):
+        return {"outcome": "failure", "reason": reason, "report": None, "diagnostics": summary}
+
+    if outcome != "success":
+        return failed("review action step did not succeed")
+    if not isinstance(messages, list):
+        return failed("execution output is missing or malformed")
+    final = result_message(messages)
+    if final is None:
+        return failed("no result envelope in execution output")
+    if final.get("subtype") != "success" or final.get("is_error") is not False:
+        return failed(
+            f"result reported {final.get('subtype')!s} with is_error={final.get('is_error')!s}"
+        )
+    turns = number(final.get("num_turns"))
+    if turns is None or turns < 1:
+        return failed("result has no completed turns (authentication or startup failure)")
+    report = final.get("result")
+    if not isinstance(report, str) or not report.strip():
+        return failed("result text is empty")
+    return {
+        "outcome": "success",
+        "reason": "report captured",
+        "report": report,
+        "diagnostics": summary,
+    }
+
+
+def extract_result(messages, outcome):
+    """Structuring stage: use the SDK structured_output, never an assistant's prose reply."""
+    summary = diagnostics(messages)
+
+    def failed(reason):
+        return {"outcome": "failure", "reason": reason, "data": None, "diagnostics": summary}
+
+    if outcome != "success":
+        return failed("structuring action step did not succeed or was skipped")
+    if not isinstance(messages, list):
+        return failed("execution output is missing or malformed")
+    final = result_message(messages)
+    if final is None:
+        return failed("no result envelope in execution output")
+    if final.get("subtype") != "success" or final.get("is_error") is not False:
+        return failed(
+            f"result reported {final.get('subtype')!s} with is_error={final.get('is_error')!s}"
+        )
+    if final.get("permission_denials"):
+        return failed("structuring pass requested a denied tool")
+    if not isinstance(final.get("structured_output"), dict):
+        return failed("no structured_output in result")
+    return {
+        "outcome": "success",
+        "reason": "structured output captured",
+        "data": final["structured_output"],
+        "diagnostics": summary,
+    }
+
+
+def stats(summary):
+    """Keep only numeric statistics for the published review and bundle."""
+    if not isinstance(summary, dict):
+        return {}
+    values = {field: number(summary.get(field)) for field in STAT_FIELDS}
+    return values if any(values.values()) else {}
+
+
+def stats_line(stage, summary):
+    values = stats(summary)
+    if not any(value is not None for value in values.values()):
+        return None
+
+    def show(field, fmt="{}"):
+        value = values[field]
+        return "n/a" if value is None else fmt.format(value)
+
+    duration = values["duration_ms"]
+    return (
+        f"{stage} stage: {show('turns')} turns, {show('tool_calls')} tool calls "
+        f"({show('subagent_tool_calls')} in subagents), {show('permission_denials')} "
+        f"permission denials, {show('cost_usd', '${:.2f}')}, "
+        f"{'n/a' if duration is None else f'{duration / 1000:.0f} s'}"
+    )
+
+
+def step_summary(lines):
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if path:
+        with Path(path).open("a") as summary:
+            summary.write("\n".join(lines) + "\n")
+
+
+def load_messages():
+    """Read the official action's execution file only from its expected location."""
+    try:
+        source = Path(os.environ["CLOAKMILL_EXECUTION_FILE"]).resolve()
+        expected = (Path(os.environ["RUNNER_TEMP"]) / "claude-execution-output.json").resolve()
+        if source == expected:
+            return json.loads(source.read_text())
+    except (KeyError, OSError, ValueError):
+        pass
+    return None
+
+
+def write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, allow_nan=False))
+
+
+def collect(kind, stage, output, report_path):
+    results = output.parent
+    outcome = os.environ.get("CLOAKMILL_ACTION_OUTCOME")
+    messages = load_messages()
+    if stage == "review":
+        entry = extract_report(messages, outcome)
+        write_json(results / "diagnostics" / f"{kind}-review.json", entry)
+        if entry["outcome"] == "success" and report_path is not None:
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(entry["report"])
+        write_json(
+            output,
+            {
+                "outcome": entry["outcome"],
+                "reason": entry["reason"],
+                "stats": stats(entry["diagnostics"]),
+            },
+        )
+    else:
+        entry = extract_result(messages, outcome)
+        write_json(results / "diagnostics" / f"{kind}-structure.json", entry)
+        try:
+            review = json.loads((results / f"{kind}-review.json").read_text())
+            review_stats = stats(review.get("stats"))
+        except (OSError, ValueError, AttributeError):
+            review_stats = {}
+        write_json(
+            output,
+            {
+                "outcome": entry["outcome"],
+                "data": entry["data"],
+                "diagnostics": {"review": review_stats, "structure": stats(entry["diagnostics"])},
+            },
+        )
+    line = stats_line(stage, entry["diagnostics"]) or f"{stage} stage: no statistics recorded"
+    step_summary(
+        [
+            f"**{kind} {stage}**: {entry['outcome']} ({entry['reason']}). {line}.",
+            "",
+        ]
+    )
+    print(
+        f"{kind} {stage} stage: {entry['outcome']} ({entry['reason']}); "
+        "raw session was not exported."
+    )
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if github_output:
+        with Path(github_output).open("a") as handle:
+            handle.write(f"outcome={entry['outcome']}\n")
 
 
 def package_results(folder, context):
@@ -96,7 +324,7 @@ def package_results(folder, context):
         try:
             value = json.loads((folder / f"{kind}.json").read_text())
         except (OSError, ValueError):
-            value = {"outcome": "failure", "data": None}
+            value = {"outcome": "failure", "data": None, "diagnostics": {}}
         bundle["results"][kind] = value
     return bundle
 
@@ -174,10 +402,25 @@ def validate_target(pr, context):
         raise ReviewError("PR head or base changed during review; rerun for the current revisions")
 
 
+def pass_statistics(entry):
+    """Render numeric stage statistics from the bundle; model text never reaches the review."""
+    diagnostics_value = entry.get("diagnostics") if isinstance(entry, dict) else None
+    if not isinstance(diagnostics_value, dict):
+        return []
+    lines = []
+    for stage, label in (("review", "Review"), ("structure", "Structuring")):
+        line = stats_line(label, diagnostics_value.get(stage))
+        if line:
+            lines.append(f"- {line}")
+    return lines
+
+
 def build_report(bundle, context, files):
     parsed = {}
+    statistics = {}
     for kind in ("code", "security"):
         entry = bundle.get("results", {}).get(kind)
+        statistics[kind] = pass_statistics(entry)
         try:
             if not isinstance(entry, dict) or entry.get("outcome") != "success":
                 raise ReviewError("Review command failed or did not finish")
@@ -187,7 +430,8 @@ def build_report(bundle, context, files):
             parsed[kind] = {
                 "status": "incomplete",
                 "summary": (
-                    "Structured review is missing or invalid. Inspect this pass in the Actions run."
+                    "Structured review is missing or invalid. Inspect this pass in the Actions run "
+                    "and its diagnostics artifact."
                 ),
                 "findings": [],
                 "limitations": ["This pass has no validated completed result."],
@@ -218,6 +462,7 @@ def build_report(bundle, context, files):
         value = parsed[kind]
         body.extend([f"### {title}: {value['status']}", "", markdown(value["summary"]), ""])
         body.extend(f"- {markdown(limit)}" for limit in value["limitations"])
+        body.extend(statistics[kind])
         body.append("")
     comments = []
     if unique:
@@ -353,25 +598,15 @@ class GitHub:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--collect", choices=("code", "security"))
+    parser.add_argument("--stage", choices=STAGES, default="structure")
+    parser.add_argument(
+        "--report", type=Path, help="where the review stage saves the command's report"
+    )
     parser.add_argument("--package", action="store_true")
     parser.add_argument("bundle", type=Path)
     args = parser.parse_args()
     if args.collect:
-        messages = None
-        try:
-            source = Path(os.environ["CLOAKMILL_EXECUTION_FILE"]).resolve()
-            expected = (Path(os.environ["RUNNER_TEMP"]) / "claude-execution-output.json").resolve()
-            if source == expected:
-                messages = json.loads(source.read_text())
-        except (KeyError, OSError, ValueError):
-            pass
-        entry = extract_result(
-            messages, os.environ.get("CLOAKMILL_ACTION_OUTCOME"), f"{args.collect}-review"
-        )
-        args.bundle.write_text(json.dumps(entry, allow_nan=False))
-        print(
-            f"{args.collect} structured result: {entry['outcome']}; raw session was not exported."
-        )
+        collect(args.collect, args.stage, args.bundle, args.report)
         return 0
     try:
         context = {
@@ -384,8 +619,7 @@ def main():
             "server_url": os.environ["GITHUB_SERVER_URL"],
         }
         if args.package:
-            data = package_results(args.bundle.parent, context)
-            args.bundle.write_text(json.dumps(data, allow_nan=False))
+            write_json(args.bundle, package_results(args.bundle.parent, context))
             return 0
         bundle = json.loads(args.bundle.read_text())
         api = GitHub(os.environ["GH_TOKEN"], os.environ["GITHUB_API_URL"])
@@ -396,13 +630,15 @@ def main():
             "Check target revisions, structured results, and GitHub permissions."
         )
         return 1
-    with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
-        summary.write(f"[Code and security review]({url})\n\n")
-        summary.write(
-            "Both passes completed with no actionable findings.\n"
+    step_summary(
+        [
+            f"[Code and security review]({url})",
+            "",
+            "Both passes completed with no actionable findings."
             if passed
-            else "Review has findings or is incomplete. Inspect the PR review before proceeding.\n"
-        )
+            else "Review has findings or is incomplete. Inspect the PR review before proceeding.",
+        ]
+    )
     if not passed:
         print(
             "::error::Review has actionable findings or is incomplete; see the published PR review."
