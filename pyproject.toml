@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cloakmill"
+dynamic = ["version"]
+description = "An open-source foundation for offline enterprise-data pseudonymization."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+keywords = ["pseudonymization", "privacy", "reinforcement-learning", "datasets", "offline"]
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Security",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/deep-chokshi/cloakmill"
+Issues = "https://github.com/deep-chokshi/cloakmill/issues"
+Roadmap = "https://github.com/deep-chokshi/cloakmill/blob/main/docs/ROADMAP.md"
+
+[dependency-groups]
+dev = ["pytest>=8.3,<10", "ruff>=0.11,<1"]
+
+[tool.hatch.version]
+path = "src/cloakmill/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cloakmill"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/docs", "/tests", "/examples", "/README.md", "/LICENSE", "/NOTICE", "/pyproject.toml", "/uv.lock"]
+
+[tool.uv]
+required-version = ">=0.11.7"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-config --strict-markers"

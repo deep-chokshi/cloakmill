@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible repository or implemented-feature problem.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Use fictional data only. Never attach customer exports, secrets, identity mappings, or private incident details. Report security issues using SECURITY.md."
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic reproduction
+      description: Provide minimal steps or a fictional example that reproduces the problem.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Commit or version, operating system, Python version, and relevant adapter.
+    validations:
+      required: true
+  - type: checkboxes
+    id: data
+    attributes:
+      label: Data review
+      options:
+        - label: This report contains no real customer data, personal identifiers, credentials, or identity mappings.
+          required: true

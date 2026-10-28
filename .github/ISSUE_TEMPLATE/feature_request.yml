@@ -1,0 +1,28 @@
+name: Feature or design proposal
+description: Propose a capability, connector, format, or evaluation method.
+title: "[Proposal]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Use fictional examples. Do not attach proprietary datasets, identifiers from real people, or credentials."
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Problem and intended user
+      description: What workflow should this support, and why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe inputs, outputs, offline requirements, and important limitations.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: How would we verify it?
+      description: Suggest a synthetic case and the privacy, structure, or RL task invariant to preserve.
+    validations:
+      required: true

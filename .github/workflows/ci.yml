@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  foundation:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+      CLOAKMILL_WHEEL_ENV: ${{ runner.temp }}/cloakmill-wheel
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Set up uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.11.7"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install locked development environment
+        run: uv sync --locked --python "${{ matrix.python }}"
+      - name: Check lint
+        run: uv run --no-sync ruff check .
+      - name: Check formatting
+        run: uv run --no-sync ruff format --check .
+      - name: Build wheel and source distribution
+        run: uv build --no-sources
+      - name: Verify wheel in a clean environment
+        run: |
+          uv venv "$CLOAKMILL_WHEEL_ENV" --python "${{ matrix.python }}"
+          uv pip install --python "$CLOAKMILL_WHEEL_ENV/bin/python" --no-index dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$CLOAKMILL_WHEEL_ENV/bin/python" -c 'import cloakmill; print(cloakmill.__version__)'

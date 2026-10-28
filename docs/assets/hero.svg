@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="480" viewBox="0 0 1280 480" role="img" aria-labelledby="title desc">
+  <title id="title">CloakMill — Keep the context. Change the identity.</title>
+  <desc id="desc">A dark green product banner with a connected identity illustration. CloakMill is an open-source project for offline enterprise-data pseudonymization.</desc>
+  <defs>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#263c35"/></pattern>
+  </defs>
+  <rect width="1280" height="480" rx="24" fill="#101d19"/>
+  <rect x="740" width="540" height="480" rx="24" fill="url(#grid)"/>
+  <g font-family="Inter, Arial, sans-serif">
+    <g transform="translate(54 42)" fill="none" stroke="#cef294" stroke-width="6" stroke-linecap="square">
+      <path d="M28 0H5v36h23M17 0v36M17 18h23M40 0v36"/>
+    </g>
+    <text x="110" y="69" font-size="28" font-weight="600" fill="#f1f4e9" letter-spacing="-1">CloakMill</text>
+    <text x="54" y="180" font-size="64" font-weight="600" fill="#f1f4e9" letter-spacing="-2">Keep the context.</text>
+    <text x="54" y="256" font-size="64" font-weight="600" fill="#cef294" letter-spacing="-2">Change the identity.</text>
+    <text x="57" y="312" font-size="22" fill="#c0cfc3">Private enterprise data. Connected training worlds.</text>
+    <path d="M57 367H642" stroke="#34473c"/>
+    <text x="57" y="411" font-size="17" fill="#c0cfc3" letter-spacing="1.5">OPEN SOURCE</text>
+    <circle cx="216" cy="405" r="3" fill="#cef294"/>
+    <text x="233" y="411" font-size="17" fill="#c0cfc3" letter-spacing="1.5">OFFLINE FIRST</text>
+    <circle cx="397" cy="405" r="3" fill="#cef294"/>
+    <text x="414" y="411" font-size="17" fill="#c0cfc3" letter-spacing="1.5">BUILT FOR RL DATA</text>
+
+    <path d="M783 139H823V239H861M783 339H823V239M1003 239H1040V139H1090M1040 239V339H1090" fill="none" stroke="#61785b" stroke-width="2"/>
+    <g fill="#192c23" stroke="#3d5141">
+      <rect x="714" y="98" width="125" height="82" rx="12"/>
+      <rect x="714" y="298" width="125" height="82" rx="12"/>
+      <rect x="1061" y="98" width="167" height="82" rx="12"/>
+      <rect x="1061" y="298" width="167" height="82" rx="12"/>
+    </g>
+    <text x="738" y="131" font-size="15" fill="#b9cdb6">EMAIL</text>
+    <text x="738" y="159" font-size="20" fill="#f1f4e9">Maya</text>
+    <text x="738" y="331" font-size="15" fill="#b9cdb6">CHAT</text>
+    <text x="738" y="359" font-size="20" fill="#f1f4e9">Maya</text>
+    <text x="1084" y="131" font-size="15" fill="#b9cdb6">EMAIL</text>
+    <text x="1084" y="159" font-size="20" fill="#cef294">Nora</text>
+    <text x="1084" y="331" font-size="15" fill="#b9cdb6">CHAT</text>
+    <text x="1084" y="359" font-size="20" fill="#cef294">Nora</text>
+    <rect x="860" y="183" width="164" height="112" rx="18" fill="#cef294"/>
+    <text x="942" y="223" font-size="15" fill="#24331c" text-anchor="middle" letter-spacing="1">ONE IDENTITY</text>
+    <text x="942" y="260" font-size="26" font-weight="600" fill="#152118" text-anchor="middle">Everywhere.</text>
+    <circle cx="823" cy="239" r="5" fill="#cef294"/>
+    <circle cx="1040" cy="239" r="5" fill="#cef294"/>
+  </g>
+</svg>

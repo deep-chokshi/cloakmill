@@ -1,0 +1,14 @@
+{
+  "kind": "illustrative-product-example",
+  "implemented": false,
+  "person": {
+    "source": {"name": "Maya Shah", "first_name": "Maya", "email": "maya@acme.example"},
+    "synthetic": {"name": "Nora Reed", "first_name": "Nora", "email": "nora@birch.example"}
+  },
+  "account": {"source": "AC-104", "synthetic": "CU-812"},
+  "surfaces": [
+    {"type": "email", "source": "Maya Shah <maya@acme.example>", "synthetic": "Nora Reed <nora@birch.example>"},
+    {"type": "chat", "source": "Ask Maya about account AC-104.", "synthetic": "Ask Nora about account CU-812."},
+    {"type": "crm", "source": "AC-104 · Owner: Maya Shah", "synthetic": "CU-812 · Owner: Nora Reed"}
+  ]
+}

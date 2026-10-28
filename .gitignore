@@ -1,0 +1,51 @@
+# Python and local tooling
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.uv-cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+
+# Customer content, identity mappings, model weights, and runtime output
+/data/
+/datasets/
+/imports/
+/exports/
+/outputs/
+/artifacts/
+/vault/
+/mappings/
+/models/
+/runs/
+/local/
+*.sqlite
+*.sqlite3
+*.db
+*.safetensors
+*.gguf
+
+# Temporary visual previews
+/work/

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520" role="img" aria-labelledby="title desc">
+  <title id="title">One identity. Every reference.</title>
+  <desc id="desc">Illustrative planned transformation using fictional data. Maya Shah becomes Nora Reed consistently in email, chat, and CRM. The linked account AC-104 becomes CU-812. No functioning pipeline is depicted.</desc>
+  <rect width="1280" height="520" rx="20" fill="#f3f4ed"/>
+  <g font-family="Inter, Arial, sans-serif">
+    <text x="48" y="63" font-size="32" font-weight="600" fill="#17271e" letter-spacing="-0.8">One identity. Every reference.</text>
+    <text x="48" y="106" font-size="18" fill="#51614f">A connected example across email, chat, and customer records.</text>
+    <rect x="48" y="139" width="554" height="306" rx="14" fill="#ffffff" stroke="#d8dfd1"/>
+    <rect x="678" y="139" width="554" height="306" rx="14" fill="#e5eddb" stroke="#c8d6bd"/>
+    <text x="75" y="177" font-size="15" fill="#51614f" letter-spacing="1.7">SOURCE WORLD</text>
+    <text x="705" y="177" font-size="15" fill="#3c5331" letter-spacing="1.7">SYNTHETIC WORLD</text>
+    <path d="M75 196H575M705 196H1205" stroke="#d8dfd1"/>
+    <text x="75" y="230" font-size="14" fill="#64725f" letter-spacing="1">EMAIL</text>
+    <text x="75" y="261" font-size="22" fill="#17271e">Maya Shah · maya@acme.example</text>
+    <text x="705" y="230" font-size="14" fill="#526847" letter-spacing="1">EMAIL</text>
+    <text x="705" y="261" font-size="22" fill="#17271e">Nora Reed · nora@birch.example</text>
+    <text x="75" y="308" font-size="14" fill="#64725f" letter-spacing="1">CHAT</text>
+    <text x="75" y="339" font-size="22" fill="#17271e">Ask Maya about account AC-104.</text>
+    <text x="705" y="308" font-size="14" fill="#526847" letter-spacing="1">CHAT</text>
+    <text x="705" y="339" font-size="22" fill="#17271e">Ask Nora about account CU-812.</text>
+    <text x="75" y="386" font-size="14" fill="#64725f" letter-spacing="1">CUSTOMER RECORD</text>
+    <text x="75" y="417" font-size="22" fill="#17271e">AC-104 · Owner: Maya Shah</text>
+    <text x="705" y="386" font-size="14" fill="#526847" letter-spacing="1">CUSTOMER RECORD</text>
+    <text x="705" y="417" font-size="22" fill="#17271e">CU-812 · Owner: Nora Reed</text>
+    <path d="M621 290H658M648 280l10 10-10 10" fill="none" stroke="#668348" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="58" cy="483" r="4" fill="#668348"/>
+    <text x="73" y="489" font-size="14" fill="#51614f" letter-spacing="1">ILLUSTRATIVE EXAMPLE · FICTIONAL DATA · PLANNED BEHAVIOR</text>
+  </g>
+</svg>
