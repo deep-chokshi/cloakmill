@@ -72,8 +72,20 @@ __version__ = "0.1.0.dev0"
 
 **Remote:** `deep-chokshi/cloakmill`
 
-- [ ] Review the staged file list and diff; commit the verified repository foundation.
-- [ ] Create the private repository using `gh repo create deep-chokshi/cloakmill --private --source=. --remote=origin --push`.
-- [ ] Set the product description and relevant repository topics.
-- [ ] Verify visibility, default branch, remote URL, and pushed commit through `gh repo view` and the GitHub API.
-- [ ] Inspect the first hosted CI run, repair any genuine setup failures, and report its observed result.
+- [x] Review the staged file list and diff; commit the verified repository foundation.
+- [x] Create the private repository using `gh repo create deep-chokshi/cloakmill --private --source=. --remote=origin --push`.
+- [x] Set the product description and relevant repository topics.
+- [x] Verify visibility, default branch, remote URL, and pushed commit through `gh repo view` and the GitHub API.
+- [x] Inspect the first hosted CI run, repair any genuine setup failures, and report its observed result.
+
+
+## Completion evidence
+
+- Repository: https://github.com/deep-chokshi/cloakmill; visibility verified as private; default branch `main`.
+- GitHub recognizes the Apache License 2.0. Repository description and topics are configured.
+- Local lint, formatting, wheel/source builds, and a clean-environment wheel import passed on Python 3.12.
+- Local document links, synthetic JSON, SVG syntax/rendering, distribution license contents, and ignored private-data paths were verified.
+- README previews were inspected at desktop and mobile widths with all images loaded and no horizontal overflow. GitHub-rendered navigation anchors, images, and alt text were checked through the authenticated API.
+- The initial CI workflow exposed an invalid job-level `runner` context. Moving the temporary-directory variable to its executing step fixed workflow validation.
+- Hosted lint, formatting, builds, and clean-environment wheel imports passed on Python 3.12 and 3.13: https://github.com/deep-chokshi/cloakmill/actions/runs/40668969489.
+- This completes the repository foundation. Detection, connectors, transformation, CLI, review UI, and air-gapped product bundles remain planned.
