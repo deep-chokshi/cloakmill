@@ -1,5 +1,7 @@
 # Claude Review Workflow Implementation Plan
 
+> Superseded on 2026-10-29. The workflow, publisher script, schema, and tests this plan created were removed in favor of Anthropic's standard workflows; see [Claude code and security review](../../development/claude-review.md).
+
 > **For agentic workers:** Use the executing-plans skill to implement this plan inline, with verification before committing.
 
 **Goal:** Add automatic and manually rerunnable Claude reviews using an owner-supplied Actions secret.

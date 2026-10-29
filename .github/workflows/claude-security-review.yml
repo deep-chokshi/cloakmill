@@ -1,0 +1,29 @@
+# Anthropic's standard Claude Code security review workflow:
+# https://github.com/anthropics/claude-code-security-review#quick-start
+name: Claude Security Review
+
+on:
+  pull_request:
+
+permissions:
+  pull-requests: write # Needed for leaving PR comments
+  contents: read
+
+jobs:
+  security:
+    # Dependabot runs get no repository secrets.
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 2
+
+      # The action has no release tags; this pins main as of 2026-02-11.
+      - uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda
+        with:
+          comment-pr: true
+          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The action's built-in default, Claude Opus 4.1, retired on 2026-08-05.
+          claude-model: claude-opus-5-5

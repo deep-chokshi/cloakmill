@@ -45,8 +45,6 @@ jobs:
         run: uv run --no-sync ruff check .
       - name: Check formatting
         run: uv run --no-sync ruff format --check .
-      - name: Verify review publisher behavior
-        run: python -m unittest discover -s .github/scripts -p 'test_*.py'
       - name: Build wheel and source distribution
         run: uv build --no-sources
       - name: Verify wheel in a clean environment

@@ -1,5 +1,7 @@
 # Claude review workflow design
 
+> Superseded on 2026-10-29. The custom workflow described here was removed and replaced by Anthropic's standard code review, security review, and `@claude` workflows; see [Claude code and security review](../../development/claude-review.md). The hosted review that "remained queued" was never enabled: it needs a Claude Team or Enterprise plan.
+
 The owner requested an API-backed GitHub Actions review after the separate hosted Claude review remained queued. Use the official `anthropics/claude-code-action`, pinned to a reviewed commit, with the repository Actions secret `ANTHROPIC_API_KEY`.
 
 Ready, same-repository pull requests run on opening, new commits, reopening, and becoming ready. A manual workflow accepts a PR number after this configuration reaches the default branch. Drafts, forks, and bot-triggered automatic runs are excluded. Resolve and validate the target through GitHub before exposing the API key to the action.
