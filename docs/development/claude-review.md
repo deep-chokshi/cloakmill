@@ -1,9 +1,9 @@
 # Claude code and security review
 
-CloakMill uses three of Anthropic's standard GitHub Actions workflows, unchanged
-except for pinned versions and a Dependabot skip. All three bill to the
-repository's Anthropic API key. None of them approves, blocks, or merges a pull
-request; they only post comments.
+CloakMill uses three of Anthropic's standard GitHub Actions workflows. They are
+unchanged except for pinned versions, a Dependabot skip, and the security
+settings described below. All three bill to the repository's Anthropic API key.
+None of them approves, blocks, or merges a pull request; they only post comments.
 
 | Workflow | Runs when | What it does |
 | --- | --- | --- |
@@ -33,13 +33,20 @@ request; they only post comments.
   changes. To review again after new pushes, comment `@claude review`. That
   comment is answered by `claude.yml`, a general Claude session rather than the
   plugin.
-- **Security review runs once per PR.** Later pushes are skipped by the action's
-  cache. Setting `run-every-commit: true` scans every push, at more cost and with
-  more false positives.
-- **Security model.** The action's built-in default, Claude Opus 4.1, is retired,
-  so the workflow sets `claude-model: claude-opus-5-5`. The action's extra
-  Claude-based false-positive filter validates the key against a retired model
-  and falls back to its rule-based filter, so its findings may be noisier.
+- **Security review runs on every push.** The workflow sets
+  `run-every-commit: true`. Without it the action scans a PR once, and a failed
+  first scan blocks every later one. Findings it already posted are not posted
+  again. A clean scan posts no comment; the green check is the result.
+- **Security model.** The action sets up Node 18, so npm installs Claude Code
+  2.1.197, the last release that runs on it. That release accepts models up to
+  Claude Opus 4.8, so the workflow sets `claude-model: claude-opus-4-8`. The
+  action's own default, Claude Opus 4.1, is retired. Its extra Claude-based
+  false-positive filter validates the key against another retired model and falls
+  back to its rule-based filter, so findings may be noisier.
+- **A failed scan fails the check.** The action reports success even when its
+  scan errors, so the workflow's last step fails the job unless the results file
+  shows a completed scan. The `security-review-results` artifact holds the
+  results and error log.
 - **`@claude` can change code.** `claude.yml` has `contents: write`, so a comment
   such as `@claude fix this` can push commits to the PR branch. Only users with
   write access can trigger it, and bot comments are ignored.
@@ -52,8 +59,8 @@ request; they only post comments.
 
 ## Cost and data
 
-Each PR normally uses one code review and one security review, and each
-`@claude` comment starts another session. All of it bills to the API key; set
+Each PR normally uses one code review and one security review per push, and
+each `@claude` comment starts another session. All of it bills to the API key; set
 spend limits in the Claude Console. Actions are pinned to commit SHAs and
 Dependabot proposes updates. The `code-review` plugin is installed from
 Anthropic's marketplace at run time and is not pinned.
@@ -69,7 +76,7 @@ repository.
 | `@claude` gets no reply | The workflow must be on `main`, the comment must contain `@claude`, and the commenter needs write access. |
 | Code review logs "Action skipped due to workflow validation" | Expected on a PR that adds or edits the workflow. It works after the change reaches `main`. |
 | No code review on later pushes | The plugin reviews once per PR. Comment `@claude review`. |
-| Security review skipped on later pushes | The action's per-PR cache. Expected unless `run-every-commit` is on. |
+| Security check fails with "did not complete" | Download `security-review-results` and read `claudecode-error.log`. A "does not support this model" error means the model is newer than the action's Claude Code accepts. |
 | Authentication or billing failure | Check the key, its workspace, its credit, and account spend limits. |
 | A `claude` check suite stays queued | That is the hosted Code Review service, which needs a Claude Team or Enterprise plan and is not enabled here. It does not affect these workflows. |
 
