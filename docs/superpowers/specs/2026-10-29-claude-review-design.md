@@ -1,0 +1,15 @@
+# Claude review workflow design
+
+> Superseded on 2026-10-29. The custom workflow described here was removed and replaced by Anthropic's standard code review, security review, and `@claude` workflows; see [Claude code and security review](../../development/claude-review.md). The hosted review that "remained queued" was never enabled: it needs a Claude Team or Enterprise plan.
+
+The owner requested an API-backed GitHub Actions review after the separate hosted Claude review remained queued. Use the official `anthropics/claude-code-action`, pinned to a reviewed commit, with the repository Actions secret `ANTHROPIC_API_KEY`.
+
+Ready, same-repository pull requests run on opening, new commits, reopening, and becoming ready. A manual workflow accepts a PR number after this configuration reaches the default branch. Drafts, forks, and bot-triggered automatic runs are excluded. Resolve and validate the target through GitHub before exposing the API key to the action.
+
+Run the bundled `/code-review` and `/security-review` commands as separate analysis steps at the immutable PR head. Fetch the exact base revision and configure `origin/HEAD` to that base so the security command reviews the intended range. Load review controls from the workflow revision and product guidance from the base revision, not from PR-authored settings. Both commands return JSON through the official action's `--json-schema` / `structured_output` interface. Neither command posts, fixes code, installs project dependencies, or executes project scripts.
+
+Analysis has a read-only `GITHUB_TOKEN`. A separate publishing job receives only the structured result bundle and holds PR-write permission. It validates schema and completion, both reviewed SHAs, changed-file/line anchors, and current PR eligibility before creating a neutral GitHub review with inline findings. The review names both passes, the head SHA, and the Actions run. Findings and incomplete results fail the gate; missing or malformed output must never become a clean review. Publication is idempotent within one run attempt and verifies the API response. No approval or merge is performed.
+
+Keep full model output disabled, cancel superseded reviews, and bound time, turns, and estimated API spend. Retain only the structured bundle for one day; do not upload raw sessions. Review code and security independently and require high-confidence, concrete findings, following Anthropic's code-review and security-review guidance. These controls do not make untrusted content safe to execute or establish a privacy guarantee. Development review sends repository content to Anthropic; the intended product runtime remains offline.
+
+Deliver this configuration on setup PR #2. The owner supplied the API key and explicitly authorized live workflow reruns to verify both review commands and publication. Use synthetic tests for missing/incomplete output, findings, malformed fields, stale targets, pagination, and posting failure before implementation. Confirm hosted CI and a real GitHub review on the current PR head. Do not merge either PR or begin Step 2 as part of setup.
