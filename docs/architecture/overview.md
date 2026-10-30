@@ -1,82 +1,135 @@
-# Architecture direction
+# CloakMill platform architecture
 
-Status: proposed platform architecture. The current repository contains the package foundation and a sample-backed Next.js frontend, not this processing implementation. See the [roadmap](../ROADMAP.md).
+**Target design · 2026-10-31.** The Python package foundation and sample-backed
+Next.js workspace exist. The connectors, processing engine, provider integrations
+and release controls below are planned. Diagrams describe responsibilities, not
+deployed services or proven coverage. See the [roadmap](../ROADMAP.md).
 
-## Product boundary
+## The complete journey
 
-CloakMill is being designed as an offline pseudonymization platform for enterprise-derived RL datasets. It replaces identities consistently while checking that relationships, artifacts, and intended tasks remain useful.
+![Planned architecture from enterprise sources through the customer-controlled processing boundary to verified outputs](../assets/platform-architecture.svg)
 
-Replacing direct identifiers does not guarantee anonymity. Rare facts, business information, long-term histories, and relationship graphs require separate privacy evaluation. See [NIST SP 800-188](https://csrc.nist.gov/pubs/sp/800/188/final).
+CloakMill will own detection orchestration, recognizer contracts, evidence handling,
+identity resolution, policy, synthetic mappings and verification. **No Presidio
+dependency and no required hosted AI service.** Customers choose self-hosted OCR,
+speech and language-model APIs through replaceable adapters. File codecs, model
+runtimes and weights remain separately versioned dependencies; this is not a claim
+of zero third-party software.
 
-## Data flow
+| Read next | What it explains |
+| --- | --- |
+| [Connectors and formats](connectors-and-formats.md) | Slack, Google Workspace, M365, S3, Azure Blob; acquisition, parsing, OCR, audio and native writing |
+| [Detection and identity engine](discovery-and-identity.md) | How Presidio organizes recognition; our own engine, automatic resolution and exception review |
+| [Self-hosted providers](model-providers.md) | Customer choice, recommended starting presets, local API contracts and bounded inference |
+| [Transformation and release](outputs-and-verification.md) | Determinism, frozen mappings, output types, verification and release blockers |
+| [Web security](web-security.md) | Browser, Next.js, private API, authorization and deployment boundaries |
+
+## Layers and ownership
+
+| Layer | Responsibility | Produces | Execution |
+| --- | --- | --- | --- |
+| 0. Acquire | Read selected scopes; capture available versions, relationships and access metadata | Immutable import package and coverage manifest | Networked customer collector, or existing offline exports |
+| 1. Admit | Verify integrity, permissions, file types and resource limits; quarantine unsafe inputs | Private source snapshot with explicit exclusions | Offline Python workers |
+| 2. Extract | Read native fields; route image regions to OCR and audio to transcription; preserve locators | Parts, text, coordinates, timestamps and coverage ledger | Isolated adapters and self-hosted APIs |
+| 3. Detect | Schema, pattern, checksum, directory and contextual recognizers; optional model proposals | Typed observations with exact supporting evidence | CloakMill-owned Python engine |
+| 4. Resolve | Link observations using stable anchors and ownership periods; surface conflicts | Versioned accepted entity graph and grouped exceptions | CloakMill-owned engine; targeted review |
+| 5. Assign | Select policy actions; allocate consistent profiles and relational identifiers | Private frozen mapping snapshot and patch plan | Deterministic core plus transactional registry |
+| 6. Write | Apply approved changes to supported native surfaces; rebuild derived artifacts | Candidate files, structured records and media | Format-specific workers |
+| 7. Verify | Check residual sensitive content, coverage, structure, relationships and task utility | Findings and pass/block decisions | Separate validation workers |
+| 8. Release | Seal only outputs whose required gates pass; enforce export permissions | Versioned dataset and non-sensitive manifest | Customer-local release service |
+
+The control plane spans every layer: scope, policy, provider configuration,
+authorization, jobs, cancellation, retention, audit events and release history.
+Customer data belongs in the private data plane, not job names or logs.
+
+## Network boundary
 
 ```mermaid
 flowchart TB
-    Exports[Customer-authorized exports] --> Import
-    Local[Local files and database snapshots] --> Import
-    subgraph Offline[Customer air-gapped environment]
-        Import[Inventory and coverage check] --> Source[(Encrypted source snapshots)]
-        Source --> Parse[Format-aware parsing]
-        Parse --> Detect[Pass 1: sensitive observations]
-        Detect --> Resolve[Evidence-backed entity resolution]
-        Resolve --> Registry[(Versioned identity and mapping registry)]
-        Registry --> Transform[Pass 2: deterministic transformation]
-        Transform --> Verify[Privacy, structure, and RL utility checks]
-        Verify --> Release[Sealed release]
-    end
-    Release --> Outputs[Sanitized artifacts, structured datasets, environment seeds]
+  SaaS["Slack / Google / M365 / cloud object storage"] --> Collector["Customer collector: read-only source access"]
+  Collector --> Package["Encrypted import package + signed manifest"]
+  Files["Existing exports / local snapshots"] --> Gate
+  Package --> Gate
+  subgraph Offline["Customer processing environment: no external egress"]
+    Gate["Import admission"] --> Workers["Extraction and processing workers"]
+    Workers --> Providers["Selected self-hosted OCR / ASR / LLM APIs"]
+    Workers --> Vault[("Source and mapping storage")]
+    Workers --> Verify["Independent verification"]
+    Verify --> Release["Sealed release storage"]
+  end
+  Release --> Transfer["Authorized download or controlled outbound transfer"]
 ```
 
-Live SaaS export utilities, if introduced, run outside the air gap. The offline product imports their packages and reports available coverage. It cannot recover history or comments absent from the source export.
+- A fully air-gapped installation imports packages through the customer's approved
+  transfer process. It does not connect directly to Slack or cloud storage.
+- Self-hosted APIs run inside that same boundary. HTTP API compatibility does not
+  imply sending data to OpenAI, Anthropic, Google or another hosted model service.
+- A customer-local object store can be read inside the boundary. Public S3/Azure
+  endpoints require the collector boundary above. An S3-compatible store is not
+  automatically compatible with every AWS feature.
+- Source credentials remain at the collector. Model credentials remain server-side.
+  A connected deployment is a different network configuration, never an automatic
+  fallback when an offline provider fails.
 
-## Identity and determinism
-
-- Represent people, accounts, organizations, projects, and business objects separately.
-- Resolve mentions to stable canonical entities using source identifiers, directory evidence, contextual links, and ownership periods.
-- Preserve evidence and distinguish observations from approved identity decisions.
-- Do not merge people on a shared first name, reused email address, or a chain of weak matches.
-- Use a namespace scoped to customer, project, and recipient. Freeze mapping snapshots per release; preserve existing assignments for incremental imports within a namespace.
-- Derive synthetic profile candidates using secret keyed derivation over the namespace, entity ID, and attribute type. Reserve valid assignments transactionally to handle collisions and concurrent workers.
-- Use one approved synthetic profile per entity so first names, full names, account identifiers, and email addresses remain aligned.
-
-The repeatability contract is: identical source artifacts, accepted entity graph, mapping snapshot, policies, and software versions produce identical outputs. Fresh model inference is outside this guarantee until its accepted decisions are frozen.
-
-## Shared representation and native fidelity
-
-Store an artifact identifier, source version, access scope, parts, observations, original locators, entity links, and proposed patches. Locators retain original byte/text offsets, XML parts, table coordinates, or image bounding boxes as appropriate. Matching normalization must not invalidate original-source positions.
-
-Document understanding and native rewriting are different adapters. [Docling](https://docling-project.github.io/docling/usage/supported_formats/) is a candidate extraction layer, not an assumed native Office round-trip writer. Its [offline configuration](https://docling-project.github.io/docling/faq/#how-do-i-run-completely-offline) requires locally available model artifacts.
-
-Surface coverage must include visible and hidden content: Office comments and caches, PDF attachments and revisions, image metadata and QR codes, email alternatives and quoted replies, database relationships, and code paths and fixtures. Unsupported or encrypted content is quarantined rather than silently copied into an output advertised as processed.
-
-## Models and sensitive content
-
-Rules, schemas, directory lookups, and local NER are the baseline. A local LLM can propose bounded observations using nearby context and a capped list of candidate entities. It cannot assign synthetic identities, rewrite whole documents, execute tools, or call external services. Validate exact evidence spans and candidate references, persist accepted decisions, and abstain when evidence is insufficient.
-
-Working credentials become inert test values. Sensitive facts and proprietary code require explicit content policies. Timeline and numeric transformations must preserve the constraints of their intended RL task or the artifact must be excluded from that release.
-
-## Release gates
+## Application and runtime topology
 
 ```mermaid
-flowchart LR
-    Candidate[Candidate output] --> P[Privacy checks]
-    Candidate --> S[Structure and referential checks]
-    Candidate --> U[RL utility checks]
-    P --> Gate{All required gates pass?}
-    S --> Gate
-    U --> Gate
-    Gate -->|Yes| Publish[Sealed release]
-    Gate -->|No| Review[Quarantine and review]
+flowchart TB
+  UI["Browser: scoped summaries and selected evidence"] --> Web["Next.js server / customer-local sign-in"]
+  Web --> API["Private Python API: authorize every operation"]
+  API --> Jobs["Job coordinator: references and checkpoints"]
+  Jobs --> CPU["CPU workers: parse, rules, resolve, write, verify"]
+  CPU --> Gateway["Provider adapters: bounded requests"]
+  Gateway --> Models["Customer-selected OCR / ASR / LLM servers"]
+  API --> DB[("PostgreSQL: jobs, graph, decisions, mappings")]
+  CPU --> DB
+  CPU --> Artifacts[("Encrypted files / NAS / local object store")]
+  CPU --> Columns[("Partitioned observation files")]
 ```
 
-Independent validation should inspect output text, rendered surfaces, metadata, relationships, and task behavior. A detector's own confidence is not a release decision. Zero detected leaks is not proof of zero actual leaks.
+Start with a modular Python application and bounded workers, not a mandatory
+microservice fleet. Keep shared contracts in `src/cloakmill/domain/`; orchestration
+in `pipeline/`; adapters in `connectors/` and `formats/`; processing in `detection/`,
+`identity/`, `transforms/` and `validation/`. PostgreSQL holds indexed metadata and
+decisions; encrypted artifacts and partitioned Parquet/Arrow hold large payloads.
+These are target stack choices, not new runtime dependencies added by this design.
 
-Transform related environments, prompts, expected answers, and reward checks consistently. Split training/evaluation by underlying organizations and entities before replacing their identifiers.
+## Where determinism begins and ends
 
-## Storage and operations
+| Operation | Contract |
+| --- | --- |
+| Native parsing, rules, normalization and checksum checks | Repeatable with fixed bytes, adapter/rule versions and configuration; normalization retains a map back to original positions |
+| OCR, speech recognition, NER and LLM inference | Treat results as observations that may vary; retain provider/model/configuration versions and accepted result snapshots |
+| Identity decisions | Persist versioned evidence and policy decisions, including automatic decisions; freeze the accepted graph for a release |
+| Profile assignment | Scope by customer/project/recipient namespace; reserve assignments transactionally; preserve existing mappings on incremental runs |
+| Transformation replay | Same source snapshot, accepted graph, mapping, policy and writer version must produce equivalent normalized content and relationships |
+| Byte-identical artifacts | A separate per-format promise: requires canonical ZIP ordering, metadata, timestamps and codec behavior; do not infer it from stable names |
 
-Start with PostgreSQL for the identity registry, decisions, and job metadata; encrypted files/NAS for artifacts; and Parquet/Arrow for large intermediate observations. Do not put the entire corpus in PostgreSQL or RAM. Add infrastructure only when measured workloads require it.
+Setting an LLM temperature to zero is not a reproducibility guarantee. Replays use
+frozen accepted results rather than fresh inference. Provider changes create a new
+analysis revision; they cannot silently alter a sealed release.
 
-Jobs exchange opaque references. Sensitive text must not enter logs, error messages, workflow histories, release reports, or public content hashes. Mappings and keys remain private and are excluded from the training dataset. Track entity-to-artifact dependencies for corrections, incremental processing, and release revocation.
+## Scale and operational behavior
 
-Offline bundles must include dependencies, model weights, language assets, licenses, and an inventory, with signed update and recovery procedures. Development CI uses the network; that does not establish offline product readiness.
+| Concern | Design response |
+| --- | --- |
+| Millions of repeated mentions | Indexed candidate retrieval and grouped identity decisions; bounded partitions instead of an in-memory corpus or all-pairs comparison |
+| Many unresolved groups | Prioritize by risk and affected artifacts; request better evidence, apply reviewed group decisions, or exclude affected artifacts explicitly |
+| Expensive inference | Native text first, OCR only required surfaces, rules before contextual inference; separate CPU/GPU queues with quotas and backpressure |
+| Retries and worker failure | At-least-once execution with idempotent commits, immutable inputs, bounded retries and atomic checkpoints; no claim of exactly-once delivery |
+| Partial results | Track every expected artifact/surface as processed, unavailable, failed or excluded; partial jobs cannot produce a complete release |
+| Incremental imports | Reuse unchanged observations, reconsider affected links, preserve existing profiles and invalidate dependent outputs when mappings change |
+| Sensitive operational data | Opaque job IDs; private scoped caches; encrypted temporary files; payload-free logs; retention and key-rotation procedures |
+| Air-gap readiness | Bundle pinned software, weights, tokenizers, language packs and licenses; disable downloads/telemetry; test with external networking denied |
+
+## Meaning of sanitized output
+
+The default identity action is **consistent synthetic replacement**. Policy can
+also remove a sensitive span, substitute an inert credential, or exclude a whole
+artifact when safe transformation is unavailable. Original identities and mapping
+keys never belong in a training-data release.
+
+Passing configured checks establishes evidence for a stated scope, not guaranteed
+absence of PII or anonymity. Rare facts, relationship graphs and biometric voice
+can still identify people. The distinction between pseudonymization and stronger
+de-identification is also discussed in [NIST SP 800-188](https://csrc.nist.gov/pubs/sp/800/188/final).

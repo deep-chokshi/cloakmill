@@ -49,10 +49,18 @@ See the [web security design](architecture/web-security.md) for acceptance crite
 
 ### Processing pipeline
 
+Priority: build automatic discovery from raw synthetic inputs before expanding
+the remaining UI stages. The target is grouped exception review, not mandatory
+manual approval of every detected mention. The [platform architecture](architecture/overview.md)
+defines the layers and their implementation boundaries.
+
+- [ ] Build the CloakMill-owned recognizer registry, evidence validator and detection orchestration without a Presidio dependency.
 - [ ] Define source records, original locators, evidence, and transformation contracts.
 - [ ] Import local folders and JSON/CSV snapshots with an explicit coverage report.
 - [ ] Detect known identifiers and rule-based sensitive fields.
 - [ ] Resolve identities with strong anchors and abstain on ambiguous matches.
+- [ ] Generate raw 1,000- and 10,000-record synthetic corpora with separate complete expected observations and identity links; evaluate missed detections, wrong merges and review workload.
+- [ ] Feed automatic discovery and grouped exceptions into the UI; audit sampled automatic decisions.
 - [ ] Create versioned, namespace-scoped synthetic profiles.
 - [ ] Apply deterministic replacements while preserving structured references.
 - [ ] Validate privacy findings and record/schema integrity.
@@ -63,8 +71,10 @@ See the [web security design](architecture/web-security.md) for acceptance crite
 
 ## File fidelity and review
 
+- [ ] Add a selectable self-hosted OCR/ASR/LLM provider catalog, validated API adapters and synthetic connection preflight; publish evaluation-backed recommendations.
 - [ ] Qualify DOCX, XLSX, and PPTX writers by supported feature.
 - [ ] Process PDFs and images, including OCR, embedded content, and metadata.
+- [ ] Qualify transcript-only voice processing before audio rewriting; evaluate timing, content and residual speaker identity separately.
 - [ ] Add a local identity-review and release-review interface.
 - [ ] Introduce bounded local-model assistance where it improves evaluated accuracy.
 - [ ] Replay representative RL tasks against transformed artifacts.
@@ -73,6 +83,8 @@ See the [web security design](architecture/web-security.md) for acceptance crite
 
 ## Enterprise operations
 
+- [ ] Add read-only Slack, Google Workspace and M365 collectors outside the air gap, with explicit export/API coverage and resumable import packages.
+- [ ] Add S3 and Azure Blob acquisition and separately authorized output transfer adapters; qualify version/snapshot handling per provider.
 - [ ] Add CRM, SQL, and NoSQL snapshot adapters.
 - [ ] Add code working-snapshot transformation with language-specific checks.
 - [ ] Support incremental imports, affected-artifact regeneration, and release revocation manifests.
