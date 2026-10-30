@@ -39,8 +39,8 @@ None of them approves, blocks, or merges a pull request; they only post comments
 - **Security review runs on every push.** The workflow sets
   `run-every-commit: true`. Without it the action scans a PR once, and a failed
   first scan blocks every later one. Findings it already posted are not posted
-  again. Once a PR has any security comment the action posts nothing new, so read
-  the check, not the comments.
+  again. Once a PR has any security comment the action posts nothing new, so the
+  workflow keeps one **Security review** comment updated with the latest scan.
 - **Security model.** The action sets up Node 18, so npm installs Claude Code
   2.1.197, the last release that runs on it. That release rejects Claude Opus
   5.5, so the workflow sets `claude-model: claude-opus-5`, tracked upstream in

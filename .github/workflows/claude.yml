@@ -35,15 +35,18 @@ jobs:
       - name: Refuse content from outside contributors
         env:
           GH_TOKEN: ${{ github.token }}
+          CLOAKMILL_ACTOR: ${{ github.actor }}
           CLOAKMILL_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
         run: |
           thread=$(gh api "repos/$GITHUB_REPOSITORY/issues/$CLOAKMILL_NUMBER")
           author=$(jq -r '.user.login' <<< "$thread")
-          permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$author/permission" --jq '.permission' 2> /dev/null || echo none)
-          if [ "$permission" != "admin" ] && [ "$permission" != "write" ]; then
-            echo "::error::Claude only runs on issues and pull requests written by people with write access."
-            exit 1
-          fi
+          for user in "$CLOAKMILL_ACTOR" "$author"; do
+            permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$user/permission" --jq '.permission' 2> /dev/null || echo none)
+            if [ "$permission" != "admin" ] && [ "$permission" != "write" ]; then
+              echo "::error::Claude only runs for people with write access, on threads they wrote."
+              exit 1
+            fi
+          done
           if jq -e 'has("pull_request")' <<< "$thread" > /dev/null; then
             head_repo=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$CLOAKMILL_NUMBER" --jq '.head.repo.full_name // ""')
             if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
