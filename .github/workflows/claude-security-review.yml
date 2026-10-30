@@ -11,8 +11,10 @@ permissions:
 
 jobs:
   security:
-    # Dependabot runs get no repository secrets.
-    if: github.actor != 'dependabot[bot]'
+    # Dependabot and fork runs get no repository secrets, so the review cannot run.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,7 +35,37 @@ jobs:
           # scan blocks later ones. Findings already posted are not repeated.
           run-every-commit: true
 
+      # The action posts nothing once a PR has any security comment, so keep one comment
+      # up to date with the latest scan.
+      - name: Post the latest findings on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOAKMILL_PR_NUMBER: ${{ github.event.pull_request.number }}
+          CLOAKMILL_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          jq -e 'type == "object" and (has("error") | not)' claudecode-results.json > /dev/null 2>&1 || exit 0
+          marker='<!-- claude-security-findings -->'
+          count=$(jq '(.findings // []) | length' claudecode-results.json)
+          comment_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$CLOAKMILL_PR_NUMBER/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | tail -1)
+          if [ "$count" -eq 0 ] && [ -z "$comment_id" ]; then
+            exit 0
+          fi
+          {
+            echo "$marker"
+            echo "## Security review"
+            echo
+            echo "Latest scan of \`$CLOAKMILL_HEAD_SHA\`: $count finding(s)."
+            jq -r '.findings // [] | .[] | "\n### \(.severity) in `\(.file):\(.line)`\n\n**\(.category)**: \(.description)\n\n**Exploit scenario:** \(.exploit_scenario)\n\n**Recommendation:** \(.recommendation)"' claudecode-results.json | sed 's/@/@\xe2\x80\x8b/g'
+          } > security-comment.md
+          if [ -n "$comment_id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" -F body=@security-comment.md > /dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$CLOAKMILL_PR_NUMBER/comments" -F body=@security-comment.md > /dev/null
+          fi
+
       # The action reports success even when its scan fails, so check its result.
+      # Findings are advice for a person to judge, so they go in the comment above.
       - name: Fail when the security scan did not complete
         run: |
           if ! jq -e 'type == "object" and (has("error") | not)' claudecode-results.json > /dev/null 2>&1; then

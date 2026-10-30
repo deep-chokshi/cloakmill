@@ -7,10 +7,17 @@ CloakMill is in early development. The most useful contributions now are well-sc
 1. Read the [architecture](docs/architecture/overview.md) and [project map](docs/development/project-structure.md).
 2. For a new component or behavior change, open a feature request describing the problem and proposed contract before building a large change.
 3. Set up the repository using the [developer guide](docs/development/getting-started.md).
-4. Work on a focused branch, add meaningful behavioral tests for implemented features, and run `make check` and `make build`.
-5. Open a pull request explaining the observable change, its limitations, and the verification performed.
+4. Work on a focused branch from `develop`, add meaningful behavioral tests for implemented features, and run `make check` and `make build`.
+5. Open a pull request into `develop` explaining the observable change, its limitations, and the verification performed.
 
-The repository is private initially. Repository access and publication remain the owner's decisions; an open-source license does not make a private repository publicly accessible.
+The repository is public. Publishing packages and releases remains the owner's decision.
+
+## Branches
+
+- `develop` is where work lands. Branch from it and open pull requests into it.
+- `main` only receives pull requests from `develop`. A GitHub ruleset blocks direct pushes, force pushes, and deletion for everyone, including the owner.
+- The **Main only accepts develop** check is required, so a pull request into `main` from anything but this repository's `develop` cannot merge. It runs from `main`, so a pull request cannot change its own check.
+- Pull requests from outside contributors wait for a maintainer to approve their CI run. Claude does not run on fork pull requests or on issues from people without write access, so maintainers handle those by hand.
 
 ## Safe examples only
 
