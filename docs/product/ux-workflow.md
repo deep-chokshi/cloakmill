@@ -55,4 +55,4 @@ flowchart LR
 
 ## Subsequent implementation
 
-Step 2 turns the reviewed visual system and interactions into the production frontend foundation. Step 3 introduces the persistent API and access/storage controls. Real source ingestion begins later. Prototype code is a design reference; it does not establish a production security boundary or a general-purpose transformation engine.
+Step 2 turns the reviewed visual system and interactions into the application frontend. Step 2A now implements the Next.js shell, sample projects and source inventory; the remaining review journey is still planned. See the [frontend guide](../../apps/review-ui/README.md). Step 3 introduces the persistent API and access/storage controls. Real source ingestion begins later. Prototype code is a design reference; it does not establish a production security boundary or a general-purpose transformation engine.

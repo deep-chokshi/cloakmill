@@ -1,6 +1,6 @@
 # Architecture direction
 
-Status: proposed platform architecture. The current repository contains the foundation, not this implementation. See the [roadmap](../ROADMAP.md).
+Status: proposed platform architecture. The current repository contains the package foundation and a sample-backed Next.js frontend, not this processing implementation. See the [roadmap](../ROADMAP.md).
 
 ## Product boundary
 

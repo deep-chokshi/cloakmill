@@ -26,6 +26,12 @@ The [Step 1 UI prototype](../../prototypes/workspace/README.md) runs independent
 
 ## Available commands
 
+The [Next.js frontend](../../apps/review-ui/README.md) has separate Node dependencies:
+run `npm ci` and `npm run dev` from `apps/review-ui/`, then open
+http://127.0.0.1:4318. It implements sample projects and source inventory. It is not
+an authenticated backend or a private-data processor. Its guide includes type,
+lint, behavioral, build and browser checks.
+
 | Command | Purpose |
 | --- | --- |
 | `make setup` | Create the locked development environment |
