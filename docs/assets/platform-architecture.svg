@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1540" viewBox="0 0 1280 1540" role="img" aria-labelledby="title desc">
+  <title id="title">CloakMill planned platform architecture</title>
+  <desc id="desc">Customer collectors acquire Slack, Google Workspace, Microsoft 365, S3, Azure Blob and local exports. Inside the customer boundary, CloakMill admits and extracts files, detects sensitive data, resolves identities automatically, freezes mappings, transforms, verifies and seals releases. Selected self-hosted OCR, speech and language-model APIs provide evidence. Human review handles grouped exceptions. Only qualified outputs leave; mappings remain private. All processing capabilities shown are planned.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#4c6b48"/></marker>
+  </defs>
+  <rect width="1280" height="1540" rx="24" fill="#fafbf7"/>
+  <path d="M24 0H1256Q1280 0 1280 24V166H0V24Q0 0 24 0" fill="#11271f"/>
+  <g font-family="Inter, Arial, sans-serif">
+    <text x="44" y="40" fill="#cef294" font-size="17" letter-spacing="2">CLOAKMILL / TARGET ARCHITECTURE</text>
+    <text x="44" y="91" fill="#f5f7ef" font-size="37" font-weight="600">Connected data. Consistent identities.</text>
+    <text x="44" y="132" fill="#c5d4c8" font-size="21">Our engine. Your infrastructure. Your choice of self-hosted models.</text>
+
+    <rect x="40" y="192" width="1200" height="92" rx="12" fill="#ffffff" stroke="#cdd8c5"/>
+    <text x="62" y="224" fill="#536649" font-size="16" font-weight="600" letter-spacing="1">ENTERPRISE SOURCES</text>
+    <text x="62" y="260" fill="#20382b" font-size="23">Slack · Google Workspace · Microsoft 365 · S3 · Azure Blob · Local exports</text>
+    <path d="M640 285V308" stroke="#4c6b48" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="40" y="316" width="1200" height="96" rx="12" fill="#eef1e8" stroke="#cdd8c5"/>
+    <text x="62" y="350" fill="#20382b" font-size="23" font-weight="600">0  Acquire and package</text>
+    <text x="62" y="383" fill="#50604b" font-size="20">Read-only collectors → encrypted snapshots, source relationships and coverage manifests</text>
+    <text x="1234" y="434" text-anchor="end" fill="#6b694e" font-size="16">Cloud acquisition happens outside the air gap</text>
+    <path d="M455 413V493" stroke="#4c6b48" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <rect x="28" y="454" width="1224" height="887" rx="18" fill="#f1f5eb" stroke="#86a374" stroke-width="2" stroke-dasharray="7 6"/>
+    <text x="52" y="485" fill="#395533" font-size="16" font-weight="600" letter-spacing="1">CUSTOMER PROCESSING BOUNDARY / NO EXTERNAL EGRESS</text>
+    <path d="M455 494V503" stroke="#4c6b48" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g fill="#ffffff" stroke="#cbd8c0">
+      <rect x="52" y="510" width="806" height="104" rx="11"/>
+      <rect x="52" y="645" width="806" height="104" rx="11"/>
+      <rect x="52" y="780" width="806" height="104" rx="11"/>
+      <rect x="52" y="915" width="806" height="104" rx="11"/>
+      <rect x="52" y="1050" width="806" height="104" rx="11"/>
+      <rect x="52" y="1185" width="806" height="112" rx="11" fill="#dbedc5" stroke="#abc68f"/>
+    </g>
+    <g fill="#20382b" font-size="25" font-weight="600">
+      <text x="76" y="549">1–2  Admit and extract</text>
+      <text x="76" y="684">3  Discover sensitive data</text>
+      <text x="76" y="819">4  Resolve identities automatically</text>
+      <text x="76" y="954">5–6  Freeze mappings and transform</text>
+      <text x="76" y="1089">7  Verify every required surface</text>
+      <text x="76" y="1224">8  Seal the qualified release</text>
+    </g>
+    <g fill="#52614a" font-size="19">
+      <text x="76" y="584">Native fields / PDF / Office / images / audio → exact source locations</text>
+      <text x="76" y="719">Our rules, checksums, directory evidence and contextual recognizers</text>
+      <text x="76" y="854">Scoped identifiers + ownership history → accepted entity graph</text>
+      <text x="76" y="989">Consistent synthetic profiles → deterministic patches → native writers</text>
+      <text x="76" y="1124">Coverage + residual sensitive content + integrity + RL task utility</text>
+      <text x="76" y="1261">Only passing outputs; declared exclusions; private mappings stay inside</text>
+    </g>
+    <g stroke="#4c6b48" stroke-width="2" marker-end="url(#arrow)">
+      <path d="M455 614V638"/><path d="M455 749V773"/>
+      <path d="M455 884V908"/><path d="M455 1019V1043"/>
+      <path d="M455 1154V1178"/><path d="M455 1297V1363"/>
+    </g>
+
+    <rect x="900" y="510" width="328" height="239" rx="12" fill="#17392c"/>
+    <text x="922" y="544" fill="#cef294" font-size="15" letter-spacing="1">SELF-HOSTED API PROVIDERS</text>
+    <g fill="#f2f5ec" font-size="22" font-weight="600">
+      <text x="922" y="584">OCR + document layout</text>
+      <text x="922" y="621">Speech + time alignment</text>
+      <text x="922" y="658">Contextual NER / LLM</text>
+    </g>
+    <text x="922" y="700" fill="#c3d5bd" font-size="17">Recommended presets or</text>
+    <text x="922" y="725" fill="#c3d5bd" font-size="17">your qualified local endpoint</text>
+    <g stroke="#4c6b48" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow)" marker-start="url(#arrow)">
+      <path d="M866 562H893"/><path d="M866 697H893"/>
+    </g>
+
+    <rect x="900" y="780" width="328" height="239" rx="12" fill="#faf3e7" stroke="#d8c29b"/>
+    <text x="922" y="816" fill="#755329" font-size="15" letter-spacing="1">HUMAN REVIEW</text>
+    <text x="922" y="858" fill="#574326" font-size="24" font-weight="600">Exceptions, grouped.</text>
+    <g fill="#715d40" font-size="18">
+      <text x="922" y="895">Ambiguous links and conflicts</text>
+      <text x="922" y="924">One decision, linked evidence</text>
+      <text x="922" y="953">Audit automatic decisions</text>
+      <text x="922" y="989">Unresolved scope stays blocked</text>
+    </g>
+    <path d="M866 832H893" stroke="#4c6b48" stroke-width="2" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+
+    <rect x="900" y="1050" width="328" height="247" rx="12" fill="#e5ecdd" stroke="#bdcdb0"/>
+    <text x="922" y="1087" fill="#395533" font-size="15" letter-spacing="1">CONTROL AND PRIVATE STATE</text>
+    <g fill="#3a5032" font-size="19">
+      <text x="922" y="1128">Access / policy / job progress</text>
+      <text x="922" y="1164">Encrypted source snapshots</text>
+      <text x="922" y="1200">Graph + mapping registry</text>
+      <text x="922" y="1236">Versions / audit / retention</text>
+      <text x="922" y="1272">Failures block affected release</text>
+    </g>
+
+    <rect x="40" y="1372" width="1200" height="112" rx="12" fill="#11271f"/>
+    <text x="62" y="1406" fill="#cef294" font-size="16" letter-spacing="1">OUTPUTS / AUTHORIZED EXPORT</text>
+    <text x="62" y="1441" fill="#f4f6ef" font-size="23">Qualified native files · Structured datasets · Transcripts / media · Release manifest</text>
+    <text x="62" y="1470" fill="#bdcfbe" font-size="17">Local download or storage; cloud destination through a controlled transfer component</text>
+    <text x="40" y="1517" fill="#607057" font-size="16">Planned capabilities. Sanitized means verified against declared policy and coverage, not guaranteed anonymity.</text>
+  </g>
+</svg>
