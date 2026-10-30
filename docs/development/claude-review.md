@@ -64,8 +64,10 @@ None of them approves, blocks, or merges a pull request; they only post comments
 - **Untrusted input.** The security action is not hardened against prompt
   injection, and both review workflows read PR content. Fork PRs get no secrets,
   so both reviews skip them, and their CI waits for a maintainer's approval.
-  `claude.yml` has write access and the API key, so it refuses fork PRs. Review
-  those by hand. Mentions from anyone else do not start Claude.
+  `claude.yml` has write access and the API key, so it refuses fork PRs and any
+  issue or PR written by someone without write access. Handle those by hand.
+  Mentions from anyone else do not start Claude, and Claude only reads comments
+  from the accounts in `include_comments_by_actor`, so add collaborators there.
 
 ## Cost and data
 

@@ -29,18 +29,27 @@ jobs:
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
-      # This job has write access and the API key, so it must never read a fork's
-      # pull request, where the content could carry a prompt injection.
-      - name: Refuse fork pull requests
-        if: github.event.issue.pull_request || github.event.pull_request
+      # This job has write access and the API key, so Claude must only read content
+      # from people with write access. A fork's pull request or an outsider's issue
+      # could carry a prompt injection.
+      - name: Refuse content from outside contributors
         env:
           GH_TOKEN: ${{ github.token }}
-          CLOAKMILL_PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          CLOAKMILL_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
         run: |
-          head_repo=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$CLOAKMILL_PR_NUMBER" --jq '.head.repo.full_name // ""')
-          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
-            echo "::error::Claude does not run on fork pull requests. Review this one by hand."
+          thread=$(gh api "repos/$GITHUB_REPOSITORY/issues/$CLOAKMILL_NUMBER")
+          author=$(jq -r '.user.login' <<< "$thread")
+          permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$author/permission" --jq '.permission' 2> /dev/null || echo none)
+          if [ "$permission" != "admin" ] && [ "$permission" != "write" ]; then
+            echo "::error::Claude only runs on issues and pull requests written by people with write access."
             exit 1
+          fi
+          if jq -e 'has("pull_request")' <<< "$thread" > /dev/null; then
+            head_repo=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$CLOAKMILL_NUMBER" --jq '.head.repo.full_name // ""')
+            if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+              echo "::error::Claude does not run on fork pull requests. Review this one by hand."
+              exit 1
+            fi
           fi
 
       - name: Checkout repository
@@ -53,3 +62,5 @@ jobs:
         uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6 # v1.0.264
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Claude only reads comments from these accounts. Add collaborators here.
+          include_comments_by_actor: "${{ github.repository_owner }},claude[bot],github-actions[bot]"
