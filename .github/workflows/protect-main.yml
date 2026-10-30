@@ -1,7 +1,7 @@
 # Required by the "Protect main" ruleset, so a pull request into main can only merge
 # from this repository's develop branch. pull_request_target runs this file from
-# main, so a pull request cannot edit its own gate. This workflow must never check
-# out or run pull request code. The push trigger reports anything that bypasses it.
+# the default branch, so a pull request cannot edit its own gate. This workflow must
+# never check out or run pull request code. The push trigger reports any bypass.
 name: Protect main
 
 on:
