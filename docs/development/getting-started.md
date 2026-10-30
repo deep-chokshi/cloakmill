@@ -18,9 +18,11 @@ make check
 make build
 ```
 
-The repository is private initially; cloning requires access granted by its owner.
+The repository is public, so cloning needs no access request.
 
-`make check` runs Ruff lint, Ruff formatting verification, and a package import. `make build` creates a wheel and source distribution under `dist/`. No behavioral tests exist yet; pytest is available for the first implemented feature.
+`make check` runs Ruff lint, Ruff formatting verification, and a package import. `make build` creates a wheel and source distribution under `dist/`. No Python pipeline behavioral tests exist yet; pytest is available for the first implemented core feature.
+
+The [Step 1 UI prototype](../../prototypes/workspace/README.md) runs independently with a localhost HTTP server. Its sample workflow model can be checked with `node --test prototypes/workspace/model.test.mjs` using Node.js 22 or newer. This does not test a production privacy engine.
 
 ## Available commands
 

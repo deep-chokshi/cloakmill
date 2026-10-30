@@ -4,3 +4,5 @@
 *.jpg binary
 *.jpeg binary
 *.pdf binary
+# Preserve upstream font license notices, including their original whitespace.
+prototypes/workspace/assets/fonts/*-OFL.txt -text -whitespace
