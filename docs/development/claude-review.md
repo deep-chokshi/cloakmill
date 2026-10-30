@@ -25,9 +25,9 @@ None of them approves, blocks, or merges a pull request; they only post comments
 
 ## What to expect
 
-- **Code review runs once per PR.** The plugin stops when Claude has already
-  commented on the PR, and it skips drafts, closed PRs, and trivial or automated
-  changes. To review again after new pushes, comment `@claude review`. That
+- **Code review runs once per PR.** The plugin stops when the PR already has a
+  review comment from it, and it skips drafts, closed PRs, and trivial or
+  automated changes. To review again after new pushes, comment `@claude review`. That
   comment is answered by `claude.yml`, a general Claude session rather than the
   plugin.
 - **Code review runs in the foreground.** The action ends a run at the first
