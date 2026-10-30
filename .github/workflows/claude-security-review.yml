@@ -35,10 +35,16 @@ jobs:
           # scan blocks later ones. Findings already posted are not repeated.
           run-every-commit: true
 
-      # The action reports success even when its scan fails, so check its result.
-      - name: Fail when the security scan did not complete
+      # The action reports success when its scan fails, and it posts nothing new once
+      # a PR has any security comment, so the result file is the source of truth.
+      - name: Fail when the scan did not complete or found something
         run: |
           if ! jq -e 'type == "object" and (has("error") | not)' claudecode-results.json > /dev/null 2>&1; then
             echo "::error::The security scan did not complete. See the security-review-results artifact."
+            exit 1
+          fi
+          if ! jq -e '(.findings // []) | length == 0' claudecode-results.json > /dev/null; then
+            jq -r '.findings[] | "::error::\(.severity) \(.category) in \(.file)"' claudecode-results.json
+            echo "::error::The security scan has findings. See the security-review-results artifact."
             exit 1
           fi

@@ -17,8 +17,7 @@ The repository is public. Publishing packages and releases remains the owner's d
 - `develop` is where work lands. Branch from it and open pull requests into it.
 - `main` only receives pull requests from `develop`. A GitHub ruleset blocks direct pushes, force pushes, and deletion for everyone, including the owner.
 - The **Main only accepts develop** check is required, so a pull request into `main` from anything but this repository's `develop` cannot merge. It runs from `main`, so a pull request cannot change its own check.
-- Pull requests from outside contributors wait for a maintainer to approve their CI run. Claude reviews skip them; a maintainer can comment `@claude review` to request one.
-- `make setup` installs local hooks that stop a commit or push to `main` before it reaches GitHub.
+- Pull requests from outside contributors wait for a maintainer to approve their CI run. Claude does not run on them, so maintainers review them by hand.
 
 ## Safe examples only
 

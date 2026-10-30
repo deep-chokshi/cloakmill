@@ -29,6 +29,20 @@ jobs:
       id-token: write
       actions: read # Required for Claude to read CI results on PRs
     steps:
+      # This job has write access and the API key, so it must never read a fork's
+      # pull request, where the content could carry a prompt injection.
+      - name: Refuse fork pull requests
+        if: github.event.issue.pull_request || github.event.pull_request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOAKMILL_PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          head_repo=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$CLOAKMILL_PR_NUMBER" --jq '.head.repo.full_name // ""')
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "::error::Claude does not run on fork pull requests. Review this one by hand."
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

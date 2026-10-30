@@ -1,6 +1,0 @@
-#!/bin/sh
-# Refuses commits made directly on main.
-if [ "$(git symbolic-ref --short -q HEAD)" = "main" ]; then
-  echo "Commits on main are blocked. Work on a branch and open a pull request into develop." >&2
-  exit 1
-fi

@@ -1,8 +1,0 @@
-#!/bin/sh
-# Refuses pushes to main. Changes reach main through a pull request from develop.
-while read -r _local_ref _local_sha remote_ref _remote_sha; do
-  if [ "$remote_ref" = "refs/heads/main" ]; then
-    echo "Pushes to main are blocked. Open a pull request from develop." >&2
-    exit 1
-  fi
-done
