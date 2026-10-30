@@ -18,6 +18,8 @@ make check
 make build
 ```
 
+The repository is public, so cloning needs no access request.
+
 `make check` runs Ruff lint, Ruff formatting verification, and a package import. `make build` creates a wheel and source distribution under `dist/`. No behavioral tests exist yet; pytest is available for the first implemented feature.
 
 ## Available commands
