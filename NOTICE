@@ -3,3 +3,7 @@ Copyright 2026 CloakMill contributors
 
 This project is licensed under the Apache License, Version 2.0.
 See LICENSE for the complete terms.
+
+The workspace prototype bundles unmodified IBM Plex Sans and Instrument Serif
+font files under the SIL Open Font License 1.1. Their original copyright and
+license notices are included in prototypes/workspace/assets/fonts/.

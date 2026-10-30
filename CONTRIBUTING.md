@@ -35,7 +35,7 @@ Use fictional data and reserved example domains. Never include raw customer expo
 
 ## Tests and verification
 
-The foundation has no implemented pipeline or behavioral tests yet. Introduce tests with the first feature, using synthetic fixtures. Check actual privacy, identity, structural, or task invariants instead of mirroring implementation logic. Report local checks and hosted CI results separately.
+The Python core has no implemented pipeline or behavioral tests yet. Introduce tests with the first core feature, using synthetic fixtures. The separate UX prototype has native Node tests for its fictional workflow model. Check actual privacy, identity, structural, or task invariants instead of mirroring implementation logic. Report local checks and hosted CI results separately.
 
 ## License and conduct
 

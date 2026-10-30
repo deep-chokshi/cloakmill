@@ -10,6 +10,17 @@ This is a direction of travel, not a delivery-date commitment. Only checked item
 - [x] Architecture and development documentation.
 - [x] Lint, format, package-build, and import CI configuration.
 
+## Step 1: user experience prototype
+
+- [x] Light workspace, dark sidebar, and locally bundled brand typography.
+- [x] Clickable overview, sources, discovery, identity review, profiles, preview, validation, and release screens.
+- [x] Fictional dataset, ambiguous-identity and shared-account review cases.
+- [x] Explicit source exclusions, frozen mapping revisions, illustrative validation, and fictional JSON download.
+- [x] Empty, loading, blocked, correction, and reset states.
+- [x] Behavioral tests for prototype release gates and invalidation.
+
+This is a sample-only design artifact, separate from the production application. See the [prototype guide](../prototypes/workspace/README.md) and [UX workflow](product/ux-workflow.md).
+
 ## First usable pipeline
 
 - [ ] Define source records, original locators, evidence, and transformation contracts.

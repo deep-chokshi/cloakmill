@@ -57,7 +57,9 @@ These are design goals. See the [roadmap](docs/ROADMAP.md) for implementation st
 
 **The repository foundation is in place.** It includes the project structure, architecture, development tooling, synthetic examples, and contribution guidelines.
 
-The first product milestone is **offline folders, structured records, and Slack/email export packages**, with consistent identity mapping and verifiable output. Connectors, transformation, a CLI, and a review application are still ahead. There is no end-user release to install yet.
+A [clickable workspace prototype](prototypes/workspace/README.md) now explores the complete user journey with fictional data, including identity review, before/after previews, release blockers, and a sample download.
+
+The first product milestone is **offline folders, structured records, and Slack/email export packages**, with consistent identity mapping and verifiable output. Production connectors, transformation, a CLI, and the persistent review application are still ahead. There is no end-user release to install yet.
 
 → [Follow the roadmap](docs/ROADMAP.md) &nbsp; · &nbsp; [Explore the design](docs/architecture/overview.md)
 
