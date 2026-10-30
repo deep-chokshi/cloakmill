@@ -56,7 +56,9 @@ None of them approves, blocks, or merges a pull request; they only post comments
   write access can trigger it, and bot comments are ignored.
 - **Project rules.** The code-review plugin checks changes against `CLAUDE.md`
   files. The root `CLAUDE.md` points to `AGENTS.md`, where CloakMill keeps its
-  rules.
+  rules. Bug finding does not depend on them, but rule checking does, and it
+  enforces whatever is written. Update `AGENTS.md` in the PR that changes a rule;
+  the PR template has a reminder.
 - **Dependabot PRs are skipped.** Dependabot runs receive no repository secrets.
 - **Untrusted input.** The security action is not hardened against prompt
   injection, and both review workflows read PR content. Run them only on PRs from
