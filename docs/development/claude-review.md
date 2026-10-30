@@ -48,10 +48,10 @@ None of them approves, blocks, or merges a pull request; they only post comments
   The action's own default, Claude Opus 4.1, is retired. Its extra Claude-based
   false-positive filter validates the key against another retired model and falls
   back to its rule-based filter, so findings may be noisier.
-- **The security check goes red on findings.** The action reports success when
-  its scan fails and can skip posting new findings, so the workflow's last step
-  fails the job unless the scan completed with no findings. The
-  `security-review-results` artifact holds the details.
+- **Findings are in the comment, not the check.** The security check only goes
+  red when the scan fails, because the action reports success even then. A green
+  check means the scan finished. Read the **Security review** comment before
+  merging. Its findings are advice from an AI reviewer, so some are false alarms.
 - **`@claude` can change code.** `claude.yml` has `contents: write`, so a comment
   such as `@claude fix this` can push commits to the PR branch. Only users with
   write access can trigger it, and bot comments are ignored.
@@ -88,7 +88,7 @@ repository.
 | `@claude` gets no reply | The workflow must be on the default branch, the comment must contain `@claude`, and the commenter needs write access. |
 | No code review on later pushes | The plugin reviews once per PR. Comment `@claude review`. |
 | Code review is green but posted nothing | Check that `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` is still on the action step. The plugin also stops silently on changes it judges trivial. `show_full_output: true` shows the reason. |
-| Security check is red | Read the job's errors. Findings are in the `security-review-results` artifact. For "did not complete", read `claudecode-error.log`; "does not support this model" means the model is newer than the action's Claude Code accepts. |
+| Security check is red | The scan did not finish. Read `claudecode-error.log` in the `security-review-results` artifact. "Does not support this model" means the model is newer than the action's Claude Code accepts. |
 | Authentication or billing failure | Check the key, its workspace, its credit, and account spend limits. |
 | A `claude` check suite stays queued | That is the hosted Code Review service, which needs a Claude Team or Enterprise plan and is not enabled here. It does not affect these workflows. |
 

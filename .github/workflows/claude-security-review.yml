@@ -34,8 +34,6 @@ jobs:
           # Scan every push. Without this, a PR is scanned once and a failed first
           # scan blocks later ones. Findings already posted are not repeated.
           run-every-commit: true
-          # Must be absolute. The action resolves relative paths from its own folder.
-          custom-security-scan-instructions: ${{ github.workspace }}/.github/security-review-notes.txt
 
       # The action posts nothing once a PR has any security comment, so keep one comment
       # up to date with the latest scan.
@@ -66,15 +64,11 @@ jobs:
             gh api "repos/$GITHUB_REPOSITORY/issues/$CLOAKMILL_PR_NUMBER/comments" -F body=@security-comment.md > /dev/null
           fi
 
-      # The action reports success when its scan fails, so the result file decides.
-      - name: Fail when the scan did not complete or found something
+      # The action reports success even when its scan fails, so check its result.
+      # Findings are advice for a person to judge, so they go in the comment above.
+      - name: Fail when the security scan did not complete
         run: |
           if ! jq -e 'type == "object" and (has("error") | not)' claudecode-results.json > /dev/null 2>&1; then
             echo "::error::The security scan did not complete. See the security-review-results artifact."
-            exit 1
-          fi
-          if ! jq -e '(.findings // []) | length == 0' claudecode-results.json > /dev/null; then
-            jq -r '.findings[] | "::error::\(.severity) \(.category) in \(.file)"' claudecode-results.json
-            echo "::error::The security scan has findings. See the security-review-results artifact."
             exit 1
           fi

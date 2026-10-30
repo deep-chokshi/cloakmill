@@ -1,3 +1,0 @@
-Verified facts about this repository. Do not report these as unconfirmed.
-
-- `include_comments_by_actor` is a real input of anthropics/claude-code-action at the commit pinned in .github/workflows/claude.yml. That commit declares it in action.yml and applies it in src/github/data/fetcher.ts.

@@ -66,4 +66,4 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Claude only reads comments from these accounts. Add collaborators here.
-          include_comments_by_actor: "${{ github.repository_owner }},claude[bot],github-actions[bot]"
+          include_comments_by_actor: "${{ github.repository_owner }},claude[bot]"
