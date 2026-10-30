@@ -1,6 +1,7 @@
 .PHONY: setup check format build
 
 setup:
+	git config core.hooksPath .githooks
 	uv sync --locked
 
 check:

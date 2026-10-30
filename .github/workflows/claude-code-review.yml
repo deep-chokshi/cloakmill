@@ -8,8 +8,10 @@ on:
 
 jobs:
   review:
-    # Dependabot runs get no repository secrets, and the action rejects bot actors.
-    if: github.actor != 'dependabot[bot]'
+    # Dependabot and fork runs get no repository secrets, so the review cannot run.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read

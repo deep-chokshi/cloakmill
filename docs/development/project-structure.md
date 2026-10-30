@@ -20,6 +20,7 @@ cloakmill/
 │   ├── architecture/    System design and architectural boundaries
 │   ├── development/     Contributor setup and repository map
 │   └── superpowers/     Dated specifications and execution plans
+├── .githooks/           Local hooks that keep commits off main
 ├── .github/             CI, contribution templates, dependency update configuration
 ├── pyproject.toml       Package, build, lint, and test configuration
 └── uv.lock              Committed development dependency resolution

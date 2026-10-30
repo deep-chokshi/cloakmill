@@ -11,8 +11,10 @@ permissions:
 
 jobs:
   security:
-    # Dependabot runs get no repository secrets.
-    if: github.actor != 'dependabot[bot]'
+    # Dependabot and fork runs get no repository secrets, so the review cannot run.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -2,7 +2,7 @@
 
 ## Product and repository state
 
-CloakMill is an offline enterprise-data pseudonymization project in early development. Read `docs/architecture/overview.md` and `docs/ROADMAP.md` before introducing behavior. This repository is private initially; do not change visibility or publish packages/releases without an explicit owner request.
+CloakMill is an offline enterprise-data pseudonymization project in early development. Read `docs/architecture/overview.md` and `docs/ROADMAP.md` before introducing behavior. This repository is public, so everything committed is visible to anyone. Do not change visibility or publish packages/releases without an explicit owner request.
 
 ## Implementation boundaries
 
@@ -19,6 +19,10 @@ CloakMill is an offline enterprise-data pseudonymization project in early develo
 - Use reserved example domains. Keep sensitive payloads out of logs and workflow metadata.
 - Keep the root README product-facing. Put developer setup and architectural internals under `docs/`.
 - Mark planned capabilities clearly; do not make illustrative visuals appear to be real product output.
+
+## Branching
+
+Branch from `develop` and open pull requests into `develop`. Only `develop` merges into `main`. Never commit or push directly to `main`.
 
 ## Verification
 

@@ -19,7 +19,7 @@ None of them approves, blocks, or merges a pull request; they only post comments
 2. The repository has an `ANTHROPIC_API_KEY` Actions secret from the
    [Claude Console](https://platform.claude.com). Use a secret, not a variable,
    and never paste the key into source, a PR, an issue, or chat.
-3. `claude.yml` must be on `main`, because GitHub always runs comment-triggered
+3. `claude.yml` must be on the default branch, because GitHub always runs comment-triggered
    workflows from the default branch. Both review workflows also run on a PR that
    adds or edits them.
 
@@ -61,8 +61,9 @@ None of them approves, blocks, or merges a pull request; they only post comments
   the PR template has a reminder.
 - **Dependabot PRs are skipped.** Dependabot runs receive no repository secrets.
 - **Untrusted input.** The security action is not hardened against prompt
-  injection, and both review workflows read PR content. Run them only on PRs from
-  trusted contributors; the repository is private and forks get no secrets.
+  injection, and both review workflows read PR content. Fork PRs get no secrets,
+  so both reviews skip them. A maintainer decides whether to review a fork PR by
+  commenting `@claude review`, which only works for users with write access.
 
 ## Cost and data
 
@@ -80,7 +81,7 @@ repository.
 
 | Symptom | Diagnosis |
 | --- | --- |
-| `@claude` gets no reply | The workflow must be on `main`, the comment must contain `@claude`, and the commenter needs write access. |
+| `@claude` gets no reply | The workflow must be on the default branch, the comment must contain `@claude`, and the commenter needs write access. |
 | No code review on later pushes | The plugin reviews once per PR. Comment `@claude review`. |
 | Code review is green but posted nothing | Check that `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` is still on the action step. The plugin also stops silently on changes it judges trivial. `show_full_output: true` shows the reason. |
 | Security check fails with "did not complete" | Download `security-review-results` and read `claudecode-error.log`. A "does not support this model" error means the model is newer than the action's Claude Code accepts. |

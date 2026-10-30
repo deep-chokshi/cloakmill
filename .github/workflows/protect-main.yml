@@ -1,0 +1,46 @@
+# Required by the "Protect main" ruleset, so a pull request into main can only merge
+# from develop. The push trigger also reports anything that bypasses that path.
+name: Protect main
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, edited]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  develop-only:
+    name: Main only accepts develop
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require a pull request from develop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOAKMILL_EVENT: ${{ github.event_name }}
+          CLOAKMILL_HEAD_REF: ${{ github.head_ref }}
+          CLOAKMILL_SHA: ${{ github.sha }}
+        run: |
+          if [ "$CLOAKMILL_EVENT" = "pull_request" ]; then
+            if [ "$CLOAKMILL_HEAD_REF" != "develop" ]; then
+              echo "::error::Pull requests into main must come from develop, not $CLOAKMILL_HEAD_REF."
+              exit 1
+            fi
+            exit 0
+          fi
+          # GitHub can take a few seconds to link a merge commit to its pull request.
+          for attempt in 1 2 3; do
+            head_ref=$(gh api "repos/$GITHUB_REPOSITORY/commits/$CLOAKMILL_SHA/pulls" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main") | .head.ref][0] // ""')
+            [ -n "$head_ref" ] && break
+            sleep 5
+          done
+          if [ "$head_ref" != "develop" ]; then
+            echo "::error::Commit $CLOAKMILL_SHA reached main without a pull request from develop."
+            exit 1
+          fi
