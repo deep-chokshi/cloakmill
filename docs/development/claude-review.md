@@ -1,8 +1,8 @@
 # Claude code and security review
 
 CloakMill uses three of Anthropic's standard GitHub Actions workflows. They are
-unchanged except for pinned versions, a Dependabot skip, and the security
-settings described below. All three bill to the repository's Anthropic API key.
+unchanged except for pinned versions, a Dependabot skip, and the settings
+described below. All three bill to the repository's Anthropic API key.
 None of them approves, blocks, or merges a pull request; they only post comments.
 
 | Workflow | Runs when | What it does |
@@ -33,6 +33,12 @@ None of them approves, blocks, or merges a pull request; they only post comments
   changes. To review again after new pushes, comment `@claude review`. That
   comment is answered by `claude.yml`, a general Claude session rather than the
   plugin.
+- **Code review runs in the foreground.** The action ends a run at the first
+  result, so background subagents are killed and the job goes green with nothing
+  posted ([issue 1499](https://github.com/anthropics/claude-code-action/issues/1499)).
+  The workflow sets `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` to prevent this, and it
+  has write access so the review can post. A green check alone does not prove a
+  review ran; look for Claude's comment.
 - **Security review runs on every push.** The workflow sets
   `run-every-commit: true`. Without it the action scans a PR once, and a failed
   first scan blocks every later one. Findings it already posted are not posted
@@ -78,6 +84,7 @@ repository.
 | `@claude` gets no reply | The workflow must be on `main`, the comment must contain `@claude`, and the commenter needs write access. |
 | Code review logs "Action skipped due to workflow validation" | Expected on a PR that adds or edits the workflow. It works after the change reaches `main`. |
 | No code review on later pushes | The plugin reviews once per PR. Comment `@claude review`. |
+| Code review is green but posted nothing | Check that `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` is still on the action step. The plugin also stops silently on changes it judges trivial. `show_full_output: true` shows the reason. |
 | Security check fails with "did not complete" | Download `security-review-results` and read `claudecode-error.log`. A "does not support this model" error means the model is newer than the action's Claude Code accepts. |
 | Authentication or billing failure | Check the key, its workspace, its credit, and account spend limits. |
 | A `claude` check suite stays queued | That is the hosted Code Review service, which needs a Claude Team or Enterprise plan and is not enabled here. It does not affect these workflows. |
