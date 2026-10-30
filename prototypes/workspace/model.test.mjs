@@ -8,6 +8,7 @@ import {
   getBlockers,
   transition,
 } from "./model.mjs";
+import { renderView } from "./views.mjs";
 
 function reviewedState() {
   let state = createDemoState();
@@ -141,4 +142,40 @@ test("a reviewed but contradictory identity choice fails the sample validation",
   assert.equal(state.validationAttempted, true);
   assert.equal(canExport(state), false);
   assert.equal(state.validationRevision, null);
+});
+
+test("reopening a case with no decision leaves the revision and approval alone", () => {
+  const unreviewed = createDemoState();
+  assert.equal(
+    transition(unreviewed, { type: "REOPEN", caseId: "maya" }),
+    unreviewed,
+  );
+
+  const approved = approvedState();
+  assert.equal(
+    transition(approved, { type: "REOPEN", caseId: "not-a-case" }),
+    approved,
+  );
+  assert.equal(canExport(approved), true);
+});
+
+test("validation does not run unless the current revision is frozen", () => {
+  const unfrozen = reviewedState();
+  assert.equal(transition(unfrozen, { type: "VALIDATE" }), unfrozen);
+  assert.equal(unfrozen.validationAttempted, false);
+
+  const edited = transition(approvedState(), { type: "REOPEN", caseId: "maya" });
+  assert.equal(transition(edited, { type: "VALIDATE" }), edited);
+  assert.equal(edited.validationAttempted, false);
+});
+
+test("the overview names the project the user created", () => {
+  let state = transition(createDemoState(), {
+    type: "CREATE_PROJECT",
+    name: "R&D <pilot>",
+  });
+  state = transition(state, { type: "LOAD_SAMPLE" });
+  const html = renderView("overview", state, { scanProgress: 0 });
+  assert.match(html, /<dt>Dataset<\/dt><dd>R&amp;D &lt;pilot&gt;<\/dd>/);
+  assert.doesNotMatch(html, /Customer operations/);
 });

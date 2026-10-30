@@ -105,6 +105,7 @@ export function transition(state, event) {
       });
     }
     case "REOPEN": {
+      if (!state.decisions[event.caseId]) return state;
       const decisions = { ...state.decisions };
       delete decisions[event.caseId];
       return edited(state, { decisions });
@@ -122,15 +123,13 @@ export function transition(state, event) {
         ? { ...state, frozenRevision: state.revision }
         : state;
     case "VALIDATE":
+      if (!canFreeze(state) || state.frozenRevision !== state.revision)
+        return state;
       return {
         ...state,
         validationAttempted: true,
         validationRevision:
-          canFreeze(state) &&
-          state.frozenRevision === state.revision &&
-          state.decisions.maya === "p017"
-            ? state.revision
-            : null,
+          state.decisions.maya === "p017" ? state.revision : null,
       };
     case "PUBLISH": {
       if (

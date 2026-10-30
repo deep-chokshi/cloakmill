@@ -7,7 +7,7 @@ import {
 } from "./model.mjs";
 import { records, sources } from "./fixtures.mjs";
 import { brandMark, icon } from "./icons.mjs";
-import { escape, navigation, renderView } from "./views.mjs";
+import { escape, navigation, renderView, scanPhase } from "./views.mjs";
 
 const root = document.getElementById("app");
 let state = createDemoState();
@@ -45,6 +45,23 @@ function render({ focus = false } = {}) {
   syncNavigation();
   if (focus)
     document.getElementById("main-content").focus({ preventScroll: true });
+}
+
+// Keeps a keyboard user's place when the page rebuilds for background work.
+function renderKeepingFocus() {
+  const { dataset = {} } = document.activeElement ?? {};
+  const selector = Object.entries(dataset)
+    .map(([key, value]) => {
+      const name = key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+      return `[data-${name}="${CSS.escape(value)}"]`;
+    })
+    .join("");
+  render();
+  if (selector) root.querySelector(selector)?.focus({ preventScroll: true });
+}
+
+function announceScan(message) {
+  document.getElementById("scan-status").textContent = message;
 }
 
 function syncNavigation() {
@@ -96,15 +113,21 @@ async function scan() {
   ui.scanProgress = 0;
   navigate("discovery");
   render();
+  announceScan("Sample scan started.");
   for (const value of [25, 65, 100]) {
     await pause(380);
     if (token !== generation) return;
     ui.scanProgress = value;
-    if (currentView() === "discovery") render();
+    if (currentView() === "discovery") {
+      render();
+      announceScan(`${scanPhase(value)}, ${value} percent.`);
+    }
   }
   if (token !== generation) return;
   update({ type: "FINISH_SCAN" });
-  render({ focus: true });
+  announceScan("");
+  if (currentView() === "discovery") render({ focus: true });
+  else renderKeepingFocus();
   notify(
     "Sample observations are ready. The two identity decisions need review.",
   );
@@ -213,7 +236,8 @@ document.addEventListener("click", (event) => {
     case "scan":
       void scan();
       break;
-    case "exclude":
+    case "exclude": {
+      const wasApproved = state.frozenRevision !== null;
       update({
         type: "EXCLUDE_UNSUPPORTED",
         value: target.dataset.value === "true",
@@ -222,9 +246,12 @@ document.addEventListener("click", (event) => {
       notify(
         state.excludedUnsupported
           ? "Encrypted sample explicitly excluded from the release scope."
-          : "Encrypted sample restored to scope. Release approval is invalidated.",
+          : wasApproved
+            ? "Encrypted sample restored to scope. Release approval is invalidated."
+            : "Encrypted sample restored to scope.",
       );
       break;
+    }
     case "inspect-source":
       ui.previewSource = target.dataset.source;
       ui.recordId = records.find(
@@ -269,17 +296,23 @@ document.addEventListener("click", (event) => {
       render();
       root.querySelector(`.entity-row[data-entity="${ui.entityId}"]`)?.focus();
       break;
-    case "reopen":
-      update({ type: "REOPEN", caseId: target.dataset.case });
+    case "reopen": {
+      const wasApproved = state.frozenRevision !== null;
+      const reopened = update({ type: "REOPEN", caseId: target.dataset.case });
       ui.caseId = target.dataset.case;
       ui.identityTab = "review";
       delete ui.choices[target.dataset.case];
       navigate("identities");
       render({ focus: true });
       notify(
-        "Review reopened. Any current mapping approval and validation are invalidated.",
+        !reopened
+          ? "Review opened."
+          : wasApproved
+            ? "Review reopened. The mapping approval and validation are invalidated."
+            : "Review reopened.",
       );
       break;
+    }
     case "freeze":
       if (update({ type: "FREEZE" })) {
         render({ focus: true });
