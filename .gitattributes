@@ -6,3 +6,4 @@
 *.pdf binary
 # Preserve upstream font license notices, including their original whitespace.
 prototypes/workspace/assets/fonts/*-OFL.txt -text -whitespace
+apps/review-ui/src/assets/*-OFL.txt -text -whitespace

@@ -49,3 +49,11 @@ service-account*.json
 
 # Temporary visual previews
 /work/
+
+# Frontend dependencies, generated code and browser evidence
+node_modules/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+playwright-report/
+test-results/

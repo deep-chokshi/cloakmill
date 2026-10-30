@@ -14,6 +14,7 @@ cloakmill/
 │   ├── validation/      Privacy, structural, and task-utility checks
 │   └── pipeline/        Job coordination and release manifests
 ├── tests/               Synthetic behavioral tests as features land
+├── apps/review-ui/      Next.js frontend foundation; fictional sample backend only
 ├── examples/synthetic/  Redistributable illustrative examples
 ├── prototypes/workspace/ Fictional, clickable UX reference; separate from the app
 ├── docs/
@@ -49,6 +50,9 @@ flowchart TB
 - Validation must be able to reject a candidate output independently of its writer.
 - Pipeline coordination passes opaque references rather than copying sensitive text into job histories.
 
-Introduce storage adapters when the first persistent registry needs them. Add `apps/review-ui/` only when a local review frontend is designed. Avoid empty service scaffolds, unneeded databases, and runtime dependencies ahead of their first consumer.
+Introduce persistent storage adapters when the first registry needs them. The
+Next.js frontend now lives in `apps/review-ui/`, with a server-only fictional data
+adapter and App Router screens. Python processing remains in `src/cloakmill/`.
+Avoid empty service scaffolds and databases ahead of their first consumer.
 
 The Step 1 prototype in `prototypes/workspace/` is a static design artifact with a native Node-tested workflow model. It is not the production frontend, a dependency of the Python core, or an implemented enterprise-data processor.

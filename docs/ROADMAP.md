@@ -23,6 +23,32 @@ This is a sample-only design artifact, separate from the production application.
 
 ## First usable pipeline
 
+The UI-first sequence also includes the frontend and API milestones below. These
+do not establish implemented privacy processing.
+
+### Step 2: application frontend
+
+- [x] Next.js App Router foundation with the approved visual system and local assets.
+- [x] Sample project creation, overview, source inventory and coverage details.
+- [x] Server-only sample access, bounded sessions, minimal DTOs and response hardening.
+- [x] Behavioral and production-browser tests; frontend CI configuration.
+- [ ] Complete identity review, profiles, preview, validation and releases in the app.
+- [ ] Qualify the completed UI against the persistent API.
+
+The [frontend guide](../apps/review-ui/README.md) describes the sample-only boundary.
+No enterprise sign-in or real data ingestion is available in Step 2A.
+
+### Step 3: persistent API and access controls
+
+- [ ] Customer-local identity provider integration and revocable sessions.
+- [ ] Server-enforced tenant/project permissions and audit events.
+- [ ] Persistent project/registry storage and authenticated private Python API.
+- [ ] Cross-user/tenant access, recovery and deployment verification.
+
+See the [web security design](architecture/web-security.md) for acceptance criteria.
+
+### Processing pipeline
+
 - [ ] Define source records, original locators, evidence, and transformation contracts.
 - [ ] Import local folders and JSON/CSV snapshots with an explicit coverage report.
 - [ ] Detect known identifiers and rule-based sensitive fields.
