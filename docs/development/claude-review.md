@@ -9,7 +9,7 @@ None of them approves, blocks, or merges a pull request; they only post comments
 | --- | --- | --- |
 | [claude-code-review.yml](../../.github/workflows/claude-code-review.yml) | A PR is opened, pushed to, reopened, or marked ready | Runs Anthropic's official `code-review` plugin, which posts an inline comment per verified issue or one summary comment when it finds none |
 | [claude-security-review.yml](../../.github/workflows/claude-security-review.yml) | A PR is opened, pushed to, or reopened | Runs [`anthropics/claude-code-security-review`](https://github.com/anthropics/claude-code-security-review), which posts inline comments on vulnerable lines |
-| [claude.yml](../../.github/workflows/claude.yml) | A PR comment, review comment, review, or issue mentions `@claude` | Claude answers in that thread, for example `@claude review` or `@claude explain this change` |
+| [claude.yml](../../.github/workflows/claude.yml) | The owner, a member, or a collaborator mentions `@claude` in a PR comment, review comment, review, or issue | Claude answers in that thread, for example `@claude review` or `@claude explain this change` |
 
 ## Setup
 
@@ -62,8 +62,9 @@ None of them approves, blocks, or merges a pull request; they only post comments
 - **Dependabot PRs are skipped.** Dependabot runs receive no repository secrets.
 - **Untrusted input.** The security action is not hardened against prompt
   injection, and both review workflows read PR content. Fork PRs get no secrets,
-  so both reviews skip them. A maintainer decides whether to review a fork PR by
-  commenting `@claude review`, which only works for users with write access.
+  so both reviews skip them, and their CI waits for a maintainer's approval. A
+  maintainer can request a review of a fork PR by commenting `@claude review`.
+  Mentions from anyone else do not start Claude.
 
 ## Cost and data
 

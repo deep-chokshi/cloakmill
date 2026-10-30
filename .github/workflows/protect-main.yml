@@ -1,9 +1,11 @@
 # Required by the "Protect main" ruleset, so a pull request into main can only merge
-# from develop. The push trigger also reports anything that bypasses that path.
+# from this repository's develop branch. pull_request_target runs this file from
+# main, so a pull request cannot edit its own gate. This workflow must never check
+# out or run pull request code. The push trigger reports anything that bypasses it.
 name: Protect main
 
 on:
-  pull_request:
+  pull_request_target:
     branches: [main]
     types: [opened, reopened, synchronize, edited]
   push:
@@ -19,16 +21,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require a pull request from develop
+      - name: Require a pull request from this repository's develop
         env:
           GH_TOKEN: ${{ github.token }}
           CLOAKMILL_EVENT: ${{ github.event_name }}
           CLOAKMILL_HEAD_REF: ${{ github.head_ref }}
+          CLOAKMILL_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           CLOAKMILL_SHA: ${{ github.sha }}
         run: |
-          if [ "$CLOAKMILL_EVENT" = "pull_request" ]; then
-            if [ "$CLOAKMILL_HEAD_REF" != "develop" ]; then
-              echo "::error::Pull requests into main must come from develop, not $CLOAKMILL_HEAD_REF."
+          if [ "$CLOAKMILL_EVENT" = "pull_request_target" ]; then
+            if [ "$CLOAKMILL_HEAD_REPO" != "$GITHUB_REPOSITORY" ] || [ "$CLOAKMILL_HEAD_REF" != "develop" ]; then
+              echo "::error::Pull requests into main must come from $GITHUB_REPOSITORY:develop, not $CLOAKMILL_HEAD_REPO:$CLOAKMILL_HEAD_REF."
               exit 1
             fi
             exit 0
@@ -36,7 +39,7 @@ jobs:
           # GitHub can take a few seconds to link a merge commit to its pull request.
           for attempt in 1 2 3; do
             head_ref=$(gh api "repos/$GITHUB_REPOSITORY/commits/$CLOAKMILL_SHA/pulls" \
-              --jq '[.[] | select(.merged_at != null and .base.ref == "main") | .head.ref][0] // ""')
+              --jq '[.[] | select(.merged_at != null and .base.ref == "main" and .head.repo.full_name == env.GITHUB_REPOSITORY) | .head.ref][0] // ""')
             [ -n "$head_ref" ] && break
             sleep 5
           done
