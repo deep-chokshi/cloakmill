@@ -14,17 +14,14 @@ None of them approves, blocks, or merges a pull request; they only post comments
 ## Setup
 
 1. The [Claude GitHub App](https://github.com/apps/claude) is installed on the
-   repository. The code review and `@claude` workflows authenticate as this app.
+   repository. The `@claude` workflow authenticates as this app and replies as
+   `claude[bot]`. Both review workflows post as `github-actions[bot]`.
 2. The repository has an `ANTHROPIC_API_KEY` Actions secret from the
    [Claude Console](https://platform.claude.com). Use a secret, not a variable,
    and never paste the key into source, a PR, an issue, or chat.
-3. The workflows must be on `main`. Until they are:
-   - `@claude` comments get no reply, because GitHub always runs comment-triggered
-     workflows from the default branch.
-   - The code review job on the PR that adds or edits its workflow logs
-     "Action skipped due to workflow validation". The app's token exchange only
-     trusts workflow files that match `main`.
-   - The security review already runs on that PR.
+3. `claude.yml` must be on `main`, because GitHub always runs comment-triggered
+   workflows from the default branch. Both review workflows also run on a PR that
+   adds or edits them.
 
 ## What to expect
 
@@ -82,7 +79,6 @@ repository.
 | Symptom | Diagnosis |
 | --- | --- |
 | `@claude` gets no reply | The workflow must be on `main`, the comment must contain `@claude`, and the commenter needs write access. |
-| Code review logs "Action skipped due to workflow validation" | Expected on a PR that adds or edits the workflow. It works after the change reaches `main`. |
 | No code review on later pushes | The plugin reviews once per PR. Comment `@claude review`. |
 | Code review is green but posted nothing | Check that `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` is still on the action step. The plugin also stops silently on changes it judges trivial. `show_full_output: true` shows the reason. |
 | Security check fails with "did not complete" | Download `security-review-results` and read `claudecode-error.log`. A "does not support this model" error means the model is newer than the action's Claude Code accepts. |

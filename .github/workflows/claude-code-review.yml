@@ -28,9 +28,9 @@ jobs:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # TEMPORARY: lets this edited workflow run on its own PR, with full logs.
+          # Post with this job's token. The Claude App's token is refused on any PR
+          # that edits this file, which would silently skip the review there.
           github_token: ${{ github.token }}
-          show_full_output: true
           plugin_marketplaces: "https://github.com/anthropics/claude-plugins-official.git"
           plugins: "code-review@claude-plugins-official"
           prompt: "/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
