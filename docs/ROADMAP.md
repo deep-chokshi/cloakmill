@@ -54,10 +54,10 @@ the remaining UI stages. The target is grouped exception review, not mandatory
 manual approval of every detected mention. The [platform architecture](architecture/overview.md)
 defines the layers and their implementation boundaries.
 
-- [ ] Build the CloakMill-owned recognizer registry, evidence validator and detection orchestration without a Presidio dependency.
+- [x] Build the CloakMill-owned recognizer registry, evidence validator and detection orchestration without a Presidio dependency.
 - [ ] Define source records, original locators, evidence, and transformation contracts.
 - [ ] Import local folders and JSON/CSV snapshots with an explicit coverage report.
-- [ ] Detect known identifiers and rule-based sensitive fields.
+- [x] Detect known identifiers and rule-based sensitive fields.
 - [ ] Resolve identities with strong anchors and abstain on ambiguous matches.
 - [ ] Generate raw 1,000- and 10,000-record synthetic corpora with separate complete expected observations and identity links; evaluate missed detections, wrong merges and review workload.
 - [ ] Feed automatic discovery and grouped exceptions into the UI; audit sampled automatic decisions.
