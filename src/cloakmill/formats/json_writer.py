@@ -9,11 +9,13 @@ from typing import Any
 from cloakmill.domain.enums import PolicyAction
 from cloakmill.domain.locators import FieldPathLocator
 from cloakmill.domain.mapping import PatchPlanEntry
-from cloakmill.formats.write_common import (
+from cloakmill.formats.json_format import (
+    ROOT_SEGMENT,
     decode_field_key,
-    require_field_path,
-    resolve_patch_text,
+    is_jsonl_root_scalar_path,
+    is_root_scalar_path,
 )
+from cloakmill.formats.write_common import require_field_path, resolve_patch_text
 from cloakmill.transforms.errors import WriterError
 from cloakmill.transforms.replacements import ReplacementVault
 
@@ -77,10 +79,14 @@ def write_jsonl_document(
         except KeyError as exc:
             raise WriterError(f"JSONL patch references missing line {line_no}") from exc
         replacement = resolve_patch_text(entry, vault)
-        rest = path[1:]
-        if rest == ("value",) or rest == ():
+        if is_jsonl_root_scalar_path(path):
+            if isinstance(working_docs[slot], dict | list):
+                raise WriterError("JSONL root sentinel cannot replace a container document line")
             working_docs[slot] = replacement
             continue
+        rest = path[1:]
+        if not rest:
+            raise WriterError("JSONL field patch path must include a field after line index")
         working_docs[slot] = _apply_field_patch(
             working_docs[slot],
             rest,
@@ -114,14 +120,16 @@ def _apply_field_patch(
     *,
     allow_empty: bool,
 ) -> Any:
-    if path == ("value",):
-        if not isinstance(document, str):
-            raise WriterError("top-level JSON 'value' path requires a string document")
+    if is_root_scalar_path(path):
+        if isinstance(document, dict | list):
+            raise WriterError("JSON root sentinel cannot patch a container document")
         if value == "" and not allow_empty:
             raise WriterError("refusing empty replacement for JSON string leaf")
         return value
     if not path:
         raise WriterError("field path must not be empty")
+    if path[0] == ROOT_SEGMENT:
+        raise WriterError("JSON root sentinel is only valid as a bare scalar path")
     _set_path_value(document, path, value, allow_empty=allow_empty)
     return document
 

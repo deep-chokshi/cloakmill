@@ -36,10 +36,11 @@ def write_csv_document(
         return b""
 
     header = rows[0]
-    if not header or any(name.strip() == "" for name in header):
+    if not header or any(name.strip() == "" for name in header) or len(set(header)) != len(header):
         raise WriterError("CSV header is invalid")
 
     body = [list(row) for row in rows[1:]]
+    patched_cells: set[tuple[int, int]] = set()
     for entry in _ordered_field_patches(patches):
         locator = require_field_path(entry.locator)
         path = locator.path
@@ -48,6 +49,12 @@ def write_csv_document(
             raise WriterError(f"CSV patch row index {row_index} out of range")
         row = body[row_index]
         col_index = _column_index(header, column)
+        cell_key = (row_index, col_index)
+        if cell_key in patched_cells:
+            raise WriterError(
+                f"multiple patches target the same CSV cell at row {row_index} col {col_index}"
+            )
+        patched_cells.add(cell_key)
         replacement = resolve_patch_text(entry, vault)
         if replacement == "" and entry.action is not PolicyAction.REMOVE:
             raise WriterError("refusing empty replacement for CSV cell")

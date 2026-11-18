@@ -5,10 +5,19 @@ from __future__ import annotations
 from cloakmill.domain.enums import PolicyAction
 from cloakmill.domain.locators import FieldPathLocator, OriginalLocator, TextOffsetLocator
 from cloakmill.domain.mapping import PatchPlanEntry
-from cloakmill.formats.json_format import EMPTY_KEY_SEGMENT
+from cloakmill.formats.json_format import decode_field_key
 from cloakmill.transforms.errors import WriterError
 from cloakmill.transforms.replacements import ReplacementVault
 from cloakmill.transforms.safety import assert_safe_replacement
+
+# Re-export for writers that previously imported decode from write_common.
+__all__ = [
+    "apply_text_offset_patches",
+    "decode_field_key",
+    "require_field_path",
+    "require_text_offset",
+    "resolve_patch_text",
+]
 
 
 def resolve_patch_text(entry: PatchPlanEntry, vault: ReplacementVault) -> str:
@@ -38,13 +47,6 @@ def apply_text_offset_patches(
             raise WriterError("invalid text offset patch bounds")
         chars[locator.start : locator.end] = list(replacement)
     return "".join(chars)
-
-
-def decode_field_key(segment: str) -> str:
-    """Decode F04 empty-key sentinel back to a JSON object key."""
-    if segment == EMPTY_KEY_SEGMENT:
-        return ""
-    return segment
 
 
 def require_field_path(locator: OriginalLocator) -> FieldPathLocator:

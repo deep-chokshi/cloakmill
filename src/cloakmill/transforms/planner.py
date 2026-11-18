@@ -11,7 +11,9 @@ import hashlib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
+from cloakmill.domain.artifacts import validate_private_integrity_digest
 from cloakmill.domain.enums import PolicyAction
+from cloakmill.domain.fields import require_opaque_id
 from cloakmill.domain.locators import FieldPathLocator, OriginalLocator, TextOffsetLocator
 from cloakmill.domain.mapping import (
     MappingSnapshot,
@@ -63,6 +65,19 @@ class ReferentialKeyRewrite:
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactScope:
+    """Explicit allowlist entry for an artifact covered by a patch plan.
+
+    Writers default-deny artifacts that are not listed here. ``content_digest``
+    must be ``sha256:<64 lowercase hex>`` of the immutable original bytes.
+    An artifact may appear with zero patch entries as an affirmative no-op.
+    """
+
+    artifact_version_id: str
+    content_digest: str
+
+
+@dataclass(frozen=True, slots=True)
 class PatchPlan:
     """Conflict-checked patches pinned to a frozen mapping and writer version."""
 
@@ -71,6 +86,7 @@ class PatchPlan:
     writer_version: str
     entries: tuple[PatchPlanEntry, ...]
     vault: ReplacementVault
+    artifact_scopes: tuple[ArtifactScope, ...] = ()
 
     @property
     def excluded_artifact_ids(self) -> frozenset[str]:
@@ -80,12 +96,24 @@ class PatchPlan:
             if entry.action is PolicyAction.EXCLUDE
         )
 
+    def scope_for(self, artifact_version_id: str) -> ArtifactScope | None:
+        for scope in self.artifact_scopes:
+            if scope.artifact_version_id == artifact_version_id:
+                return scope
+        return None
+
+
+def content_digest_sha256(payload: bytes) -> str:
+    """Return a private integrity digest for original artifact bytes."""
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
 
 def plan_patches(
     *,
     frozen: FrozenMappingBundle,
     requests: Sequence[PatchRequest],
     referential_rewrites: Sequence[ReferentialKeyRewrite] = (),
+    artifact_scopes: Sequence[ArtifactScope] = (),
     writer_version: str = WRITER_VERSION,
 ) -> PatchPlan:
     """Build a deterministic patch plan from policy intents and frozen profiles."""
@@ -95,6 +123,9 @@ def plan_patches(
     validate_mapping_snapshot(snapshot)
     if writer_version.strip() == "":
         raise TransformError("writer_version must be non-empty")
+
+    scopes = _validate_artifact_scopes(artifact_scopes)
+    scope_ids = {scope.artifact_version_id for scope in scopes}
 
     profiles = frozen.profile_by_id()
     entity_to_profile = {
@@ -113,6 +144,12 @@ def plan_patches(
         )
         for item in referential_rewrites
     ]
+    for request in expanded:
+        if request.artifact_version_id not in scope_ids:
+            raise TransformError(
+                f"patch request artifact {request.artifact_version_id!r} "
+                "is not listed in artifact_scopes"
+            )
     if not expanded:
         return PatchPlan(
             mapping_snapshot_id=snapshot.opaque_id,
@@ -120,6 +157,7 @@ def plan_patches(
             writer_version=writer_version,
             entries=(),
             vault=build_replacement_vault({}),
+            artifact_scopes=scopes,
         )
 
     # Stable ordering before conflict resolution for deterministic opaque ids.
@@ -150,6 +188,7 @@ def plan_patches(
         writer_version=writer_version,
         entries=tuple(plan_entries),
         vault=build_replacement_vault(vault_entries),
+        artifact_scopes=scopes,
     )
 
 
@@ -168,6 +207,24 @@ def patches_for_artifact(
     ]
     selected.sort(key=_entry_sort_key)
     return tuple(selected)
+
+
+def _validate_artifact_scopes(scopes: Sequence[ArtifactScope]) -> tuple[ArtifactScope, ...]:
+    seen: set[str] = set()
+    validated: list[ArtifactScope] = []
+    for scope in scopes:
+        if not isinstance(scope, ArtifactScope):
+            raise TransformError("artifact_scopes entries must be ArtifactScope")
+        require_opaque_id(scope.artifact_version_id, "artifact_version_id")
+        validate_private_integrity_digest(scope.content_digest)
+        if scope.artifact_version_id in seen:
+            raise TransformError(
+                f"duplicate artifact_scopes entry for {scope.artifact_version_id!r}"
+            )
+        seen.add(scope.artifact_version_id)
+        validated.append(scope)
+    validated.sort(key=lambda item: item.artifact_version_id)
+    return tuple(validated)
 
 
 def _materialize_entry(
@@ -301,42 +358,38 @@ def _resolve_text_overlaps(requests: Sequence[PatchRequest]) -> list[PatchReques
         locator = request.locator
         assert isinstance(locator, TextOffsetLocator)
         conflict = False
-        contained = False
-        for prior in accepted_spans:
+        skip_duplicate = False
+        for prior_request, prior in zip(accepted, accepted_spans, strict=True):
             if prior.unit != locator.unit:
                 raise PatchConflictError("text patches must share the same offset unit")
             if not _text_offsets_overlap(prior, locator):
                 continue
-            if _span_contains(prior, locator):
-                contained = True
-                break
-            if _span_contains(locator, prior):
-                # Should not happen because longer spans are considered first.
-                raise PatchConflictError("internal overlap order error")
-            conflict = True
-            break
-        if contained:
-            continue
-        if conflict:
-            raise PatchConflictError(
-                f"partial text-offset overlap at [{locator.start}, {locator.end})"
-            )
-        # Deduplicate identical spans with identical semantics.
-        duplicate = False
-        for prior_request, prior_span in zip(accepted, accepted_spans, strict=True):
+            # Identical spans: conflict if semantics differ; otherwise dedupe.
             if (
-                prior_span.start == locator.start
-                and prior_span.end == locator.end
-                and prior_span.unit == locator.unit
+                prior.start == locator.start
+                and prior.end == locator.end
+                and prior.unit == locator.unit
             ):
                 if not _requests_semantically_equal(prior_request, request):
                     raise PatchConflictError(
                         f"conflicting patches for text span [{locator.start}, {locator.end})"
                     )
-                duplicate = True
+                skip_duplicate = True
                 break
-        if duplicate:
+            if _span_strictly_contains(prior, locator):
+                skip_duplicate = True
+                break
+            if _span_strictly_contains(locator, prior):
+                # Should not happen because longer spans are considered first.
+                raise PatchConflictError("internal overlap order error")
+            conflict = True
+            break
+        if skip_duplicate:
             continue
+        if conflict:
+            raise PatchConflictError(
+                f"partial text-offset overlap at [{locator.start}, {locator.end})"
+            )
         accepted.append(request)
         accepted_spans.append(locator)
     return accepted
@@ -358,8 +411,11 @@ def _text_offsets_overlap(left: TextOffsetLocator, right: TextOffsetLocator) -> 
     return left.start < right.end and right.start < left.end
 
 
-def _span_contains(outer: TextOffsetLocator, inner: TextOffsetLocator) -> bool:
-    return outer.start <= inner.start and inner.end <= outer.end
+def _span_strictly_contains(outer: TextOffsetLocator, inner: TextOffsetLocator) -> bool:
+    """Return True when ``outer`` covers ``inner`` and is strictly larger."""
+    if not (outer.start <= inner.start and inner.end <= outer.end):
+        return False
+    return outer.start < inner.start or inner.end < outer.end
 
 
 def _request_sort_key(request: PatchRequest) -> tuple[object, ...]:

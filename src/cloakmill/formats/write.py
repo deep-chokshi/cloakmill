@@ -9,7 +9,7 @@ from cloakmill.formats.csv_writer import write_csv_document
 from cloakmill.formats.json_writer import write_json_document, write_jsonl_document
 from cloakmill.formats.text_writer import write_text_document
 from cloakmill.transforms.errors import WriterError
-from cloakmill.transforms.planner import PatchPlan, patches_for_artifact
+from cloakmill.transforms.planner import PatchPlan, content_digest_sha256, patches_for_artifact
 from cloakmill.transforms.replacements import ReplacementVault
 
 SUPPORTED_WRITE_MEDIA_TYPES: frozenset[str] = frozenset(
@@ -43,15 +43,30 @@ def write_artifact(
     Originals are never written in place: callers receive a new ``bytes`` object.
     Excluded artifacts return ``excluded=True`` with empty payload and must not be
     copied into a sanitized release.
+
+    Default deny: the artifact must appear in ``plan.artifact_scopes`` (patched or
+    affirmative no-op). Writers also verify the pinned content digest before apply.
     """
     if media_type not in SUPPORTED_WRITE_MEDIA_TYPES:
         raise WriterError(f"unsupported write media type: {media_type!r}")
+
+    scope = plan.scope_for(artifact_version_id)
+    if scope is None:
+        raise WriterError(
+            f"artifact {artifact_version_id!r} is not in the patch plan artifact_scopes"
+        )
+
+    source = bytes(original_payload)
+    actual_digest = content_digest_sha256(source)
+    if actual_digest != scope.content_digest:
+        raise WriterError(
+            f"artifact {artifact_version_id!r} content digest mismatch with patch plan"
+        )
+
     if artifact_version_id in plan.excluded_artifact_ids:
         return WriteResult(media_type=media_type, payload=b"", excluded=True)
 
     patches = patches_for_artifact(plan, artifact_version_id)
-    # Defensive copy so callers cannot observe mutation of the input buffer.
-    source = bytes(original_payload)
     payload = apply_patches(
         media_type=media_type,
         original_payload=source,

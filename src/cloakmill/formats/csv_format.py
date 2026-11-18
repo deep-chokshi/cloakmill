@@ -43,7 +43,9 @@ def extract_csv_parts(
         return CsvExtractResult(parts=())
 
     header = rows[0]
-    if not header or any(name.strip() == "" for name in header):
+    if not header or any(name.strip() == "" for name in header) or len(set(header)) != len(header):
+        # Duplicate header names make ("rows", i, name) paths ambiguous and can
+        # leave an unpatched column's original value in the writer output.
         return CsvExtractResult(parts=(), parse_error="InvalidHeader")
 
     parts: list[Part] = []
