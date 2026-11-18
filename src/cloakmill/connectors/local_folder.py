@@ -114,9 +114,7 @@ def _absolute_exclusion_to_root_relative(pattern: str, root: Path) -> str:
         concrete_resolved = concrete.resolve(strict=False)
         relative = concrete_resolved.relative_to(root_resolved)
     except ValueError as exc:
-        raise ValueError(
-            f"absolute exclusion is not under ingest root: {pattern!r}"
-        ) from exc
+        raise ValueError(f"absolute exclusion is not under ingest root: {pattern!r}") from exc
     rel_text = "" if relative.as_posix() == "." else relative.as_posix()
     if glob_parts:
         suffix = "/".join(glob_parts)
@@ -847,9 +845,7 @@ def scan_local_folder(
 
     if exclusion_patterns:
         unmatched = [
-            pattern
-            for pattern in exclusion_patterns
-            if pattern not in matched_exclusion_patterns
+            pattern for pattern in exclusion_patterns if pattern not in matched_exclusion_patterns
         ]
         if unmatched:
             raise ValueError(
