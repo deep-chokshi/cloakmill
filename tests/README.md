@@ -5,6 +5,8 @@ Python behavioral tests live under `unit/`, `integration/`, and `acceptance/` as
 Current coverage:
 
 - `unit/domain/` — F01 immutable artifact/part/locator/observation contracts, serialization round-trips, locator bound rejection, and domain import isolation.
+- `unit/detection/` — F05 CloakMill-owned recognizers, catalog scheduling, observation validation (bounds/overlap/dedupe), and DiscoveryEngine determinism; asserts no Presidio import.
+- `integration/detection/` — multi-part discovery smoke on synthetic text/fields plus optional `examples/synthetic/identity-preview.json` smoke.
 
 Use synthetic fixtures exclusively. Prefer reserved example domains (for example `acme.example`). Never commit enterprise data, secrets, or source-to-synthetic mappings.
 
