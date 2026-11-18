@@ -482,6 +482,88 @@ def test_hard_link_to_excluded_file_is_excluded(tmp_path: Path) -> None:
     assert len(result.artifacts) == 1
 
 
+def test_exclusion_patterns_normalize_common_spellings(tmp_path: Path) -> None:
+    """Leading ./ or / and trailing / must not silently no-op exclusions."""
+    from cloakmill.connectors.local_folder import normalize_exclusion_pattern
+
+    assert normalize_exclusion_pattern("./secrets/**") == "secrets/**"
+    assert normalize_exclusion_pattern("/secrets/**") == "secrets/**"
+    assert normalize_exclusion_pattern("secrets/") == "secrets"
+    with pytest.raises(ValueError, match="backslash"):
+        normalize_exclusion_pattern(r"secrets\**")
+
+    root = tmp_path / "pkg"
+    _write(root / "secrets" / "token.txt", "not-a-real-secret\n")
+    _write(root / "ok.txt", "fine\n")
+
+    for pattern in ("./secrets/**", "/secrets/**", "secrets/"):
+        result = ingest_local_folder(
+            root,
+            access_scope="project:syn-demo",
+            exclusions=(pattern,),
+        )
+        by_path = {entry.relative_package_path: entry for entry in result.inventory}
+        assert by_path["secrets"].disposition is AdmissionDisposition.EXCLUDED, pattern
+        assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED, pattern
+        assert "secrets/token.txt" not in by_path
+        assert all(
+            payload.relative_package_path == "ok.txt" for payload in result.admitted_payloads
+        ), pattern
+
+
+def test_unreadable_excluded_tree_fails_closed_on_hard_links(tmp_path: Path) -> None:
+    """If an excluded subtree cannot be enumerated, multiply-linked files are excluded."""
+    root = tmp_path / "pkg"
+    secrets = root / "secrets"
+    secrets.mkdir(parents=True)
+    excluded = secrets / "token.txt"
+    _write(excluded, "not-a-real-secret\n")
+    alias = root / "alias.txt"
+    alias.hardlink_to(excluded)
+    _write(root / "ok.txt", "fine\n")
+    # Make the excluded directory unreadable so inode pre-scan cannot list children.
+    secrets.chmod(0o000)
+    try:
+        result = ingest_local_folder(
+            root,
+            access_scope="project:syn-demo",
+            exclusions=("secrets/**",),
+        )
+    finally:
+        secrets.chmod(0o755)
+
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["alias.txt"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert result.admitted_payloads and all(
+        payload.relative_package_path == "ok.txt" for payload in result.admitted_payloads
+    )
+
+
+def test_file_open_uses_nofollow_against_symlink_swap(tmp_path: Path) -> None:
+    """Admission reads through O_NOFOLLOW so a post-check symlink swap cannot escape."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    target = root / "notes.txt"
+    _write(target, "benign\n")
+    outside = tmp_path / "outside-secret.txt"
+    _write(outside, "should-not-admit\n")
+
+    # Simulate TOCTOU: replace the regular file with an escaping symlink, then open.
+    target.unlink()
+    target.symlink_to(outside)
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["notes.txt"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["notes.txt"].reason in {
+        AdmissionReason.FILE_SYMLINK,
+        AdmissionReason.SYMLINK_ESCAPE,
+    }
+    assert result.admitted_payloads == ()
+    assert result.artifacts == ()
+
+
 def test_hard_link_to_excluded_backslash_named_file_is_excluded(tmp_path: Path) -> None:
     """Excluded-tree files with ``\\`` in the name must still contribute inodes."""
     root = tmp_path / "pkg"
