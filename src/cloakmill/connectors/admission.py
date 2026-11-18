@@ -24,6 +24,7 @@ class AdmissionReason(StrEnum):
     OK = "ok"
     EXPLICIT_EXCLUSION = "explicit_exclusion"
     SYMLINK_ESCAPE = "symlink_escape"
+    HARD_LINK_ESCAPE = "hard_link_escape"
     SYMLINK_CYCLE = "symlink_cycle"
     DIRECTORY_SYMLINK = "directory_symlink"
     FILE_SYMLINK = "file_symlink"

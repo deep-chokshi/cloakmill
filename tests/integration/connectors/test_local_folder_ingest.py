@@ -471,11 +471,7 @@ def test_backslash_filename_is_quarantined(tmp_path: Path) -> None:
     spoofed.write_text("not-a-real-secret\n", encoding="utf-8")
     _write(root / "ok.txt", "fine\n")
 
-    result = ingest_local_folder(
-        root,
-        access_scope="project:syn-demo",
-        exclusions=("secrets/**",),
-    )
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
     by_path = {entry.relative_package_path: entry for entry in result.inventory}
     assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
     assert "secrets%5Ctoken.txt" in by_path
@@ -557,22 +553,33 @@ def test_hard_link_to_excluded_file_is_excluded(tmp_path: Path) -> None:
 
 
 def test_exclusion_patterns_normalize_common_spellings(tmp_path: Path) -> None:
-    """Leading ./ or / and trailing / must not silently no-op exclusions."""
-    from cloakmill.connectors.local_folder import normalize_exclusion_pattern
+    """Leading ./ and trailing / normalize; absolute paths require root resolution."""
+    from cloakmill.connectors.local_folder import (
+        normalize_exclusion_pattern,
+        resolve_exclusion_patterns,
+    )
 
     assert normalize_exclusion_pattern("./secrets/**") == "secrets/**"
-    assert normalize_exclusion_pattern("/secrets/**") == "secrets/**"
     assert normalize_exclusion_pattern("secrets/") == "secrets"
     assert normalize_exclusion_pattern("secrets/**/") == "secrets/**"
     assert normalize_exclusion_pattern("**/secrets") == "**/secrets"
     with pytest.raises(ValueError, match="backslash"):
         normalize_exclusion_pattern(r"secrets\**")
+    with pytest.raises(ValueError, match="root-relative"):
+        normalize_exclusion_pattern("/secrets/**")
 
     root = tmp_path / "pkg"
     _write(root / "secrets" / "token.txt", "not-a-real-secret\n")
     _write(root / "ok.txt", "fine\n")
 
-    for pattern in ("./secrets/**", "/secrets/**", "secrets/", "secrets/**/", "**/secrets"):
+    absolute_under_root = str((root / "secrets").resolve()) + "/**"
+    assert resolve_exclusion_patterns((absolute_under_root,), root=root.resolve()) == (
+        "secrets/**",
+    )
+    with pytest.raises(ValueError, match="not under ingest root"):
+        resolve_exclusion_patterns(("/var/empty/not-here/secrets/**",), root=root.resolve())
+
+    for pattern in ("./secrets/**", absolute_under_root, "secrets/", "secrets/**/", "**/secrets"):
         result = ingest_local_folder(
             root,
             access_scope="project:syn-demo",
@@ -585,6 +592,36 @@ def test_exclusion_patterns_normalize_common_spellings(tmp_path: Path) -> None:
         assert all(
             payload.relative_package_path == "ok.txt" for payload in result.admitted_payloads
         ), pattern
+
+
+def test_unmatched_exclusion_pattern_fails_closed(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    _write(root / "ok.txt", "fine\n")
+
+    with pytest.raises(ValueError, match="matched no inventoried paths"):
+        ingest_local_folder(
+            root,
+            access_scope="project:syn-demo",
+            exclusions=("missing-secrets/**",),
+        )
+
+
+def test_hard_link_outside_root_is_quarantined(tmp_path: Path) -> None:
+    """Hard links whose inode also has names outside the root must not be admitted."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    outside = tmp_path / "outside.json"
+    _write(outside, json.dumps({"email": "maya@acme.example"}))
+    alias = root / "records.json"
+    alias.hardlink_to(outside)
+    _write(root / "ok.txt", "fine\n")
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["records.json"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["records.json"].reason is AdmissionReason.HARD_LINK_ESCAPE
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert all(payload.relative_package_path == "ok.txt" for payload in result.admitted_payloads)
 
 
 def test_any_depth_exclusion_matches_nested_and_root(tmp_path: Path) -> None:

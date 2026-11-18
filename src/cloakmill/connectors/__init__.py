@@ -17,6 +17,7 @@ from cloakmill.connectors.local_folder import (
     LocalFolderScanResult,
     normalize_exclusion_pattern,
     normalize_exclusion_patterns,
+    resolve_exclusion_patterns,
     scan_local_folder,
 )
 
@@ -34,6 +35,7 @@ __all__ = [
     "normalize_exclusion_patterns",
     "normalize_relative_package_path",
     "opaque_id_for_relative_path",
+    "resolve_exclusion_patterns",
     "scan_local_folder",
     "sha256_digest",
 ]

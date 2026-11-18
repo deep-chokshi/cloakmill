@@ -67,9 +67,10 @@ def normalize_exclusion_pattern(pattern: str) -> str:
     - ``**/name`` — name at any depth, including the package root
     - ``*.ext`` / other fnmatch globs against the path and ancestors
 
-    Leading ``./`` and ``/``, and any trailing ``/``, are stripped so spellings
-    such as ``./secrets/**``, ``/secrets/**``, ``secrets/``, and ``secrets/**/``
-    all work. Backslashes are rejected.
+    Leading ``./`` and trailing ``/`` are stripped so ``./secrets/**`` and
+    ``secrets/`` work. Absolute patterns (leading ``/``) are rejected here —
+    callers must rewrite them to root-relative form via
+    :func:`resolve_exclusion_patterns` first. Backslashes are rejected.
     """
     text = pattern.strip()
     if not text:
@@ -78,12 +79,15 @@ def normalize_exclusion_pattern(pattern: str) -> str:
         raise ValueError(f"exclusion pattern must not contain backslashes: {pattern!r}")
     while text.startswith("./"):
         text = text[2:]
-    # Keep a leading **/ (any-depth) but strip a lone absolute slash.
+    if text.startswith("/"):
+        raise ValueError(
+            "exclusion pattern must be root-relative; absolute paths must be "
+            f"resolved under the ingest root first: {pattern!r}"
+        )
+    # Keep a leading **/ (any-depth).
     if text.startswith("**/"):
         rest = text[3:].lstrip("/")
         text = f"**/{rest}" if rest else "**"
-    else:
-        text = text.lstrip("/")
     # Always strip trailing slashes so secrets/**/ → secrets/**
     text = text.rstrip("/")
     if not text or text in {".", "..", "**"}:
@@ -91,8 +95,61 @@ def normalize_exclusion_pattern(pattern: str) -> str:
     return text
 
 
+def _absolute_exclusion_to_root_relative(pattern: str, root: Path) -> str:
+    """Rewrite an absolute exclusion to a root-relative pattern, or fail closed."""
+    # Split concrete path prefix from trailing glob segments (``*``, ``?``, ``[``).
+    parts = pattern.split("/")[1:]  # drop empty segment before leading /
+    concrete_parts: list[str] = []
+    glob_parts: list[str] = []
+    in_glob = False
+    for part in parts:
+        if in_glob or any(char in part for char in "*?["):
+            in_glob = True
+            glob_parts.append(part)
+        else:
+            concrete_parts.append(part)
+    concrete = Path("/" + "/".join(concrete_parts)) if concrete_parts else Path("/")
+    root_resolved = root.resolve(strict=True)
+    try:
+        concrete_resolved = concrete.resolve(strict=False)
+        relative = concrete_resolved.relative_to(root_resolved)
+    except ValueError as exc:
+        raise ValueError(
+            f"absolute exclusion is not under ingest root: {pattern!r}"
+        ) from exc
+    rel_text = "" if relative.as_posix() == "." else relative.as_posix()
+    if glob_parts:
+        suffix = "/".join(glob_parts)
+        combined = f"{rel_text}/{suffix}" if rel_text else suffix
+    else:
+        combined = rel_text
+    if not combined:
+        raise ValueError(f"absolute exclusion resolves to ingest root itself: {pattern!r}")
+    return combined
+
+
+def resolve_exclusion_patterns(
+    patterns: Iterable[str],
+    *,
+    root: Path,
+) -> tuple[str, ...]:
+    """Resolve exclusions against ``root``, then normalize; fail closed on absolute misses."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    root_path = Path(root)
+    for pattern in patterns:
+        text = pattern.strip()
+        if text.startswith("/") or Path(text).is_absolute():
+            text = _absolute_exclusion_to_root_relative(text, root_path)
+        item = normalize_exclusion_pattern(text)
+        if item not in seen:
+            seen.add(item)
+            normalized.append(item)
+    return tuple(normalized)
+
+
 def normalize_exclusion_patterns(patterns: Iterable[str]) -> tuple[str, ...]:
-    """Normalize and de-duplicate exclusion patterns; fail closed on invalid input."""
+    """Normalize and de-duplicate root-relative exclusion patterns; fail closed on invalid input."""
     normalized: list[str] = []
     seen: set[str] = set()
     for pattern in patterns:
@@ -132,15 +189,31 @@ def _matches_one_pattern(candidate: str, pattern: str) -> bool:
     return candidate.endswith(f"/{pattern}")
 
 
-def _matches_exclusion(relative_path: str, patterns: Sequence[str]) -> bool:
+def _matches_exclusion(
+    relative_path: str,
+    patterns: Sequence[str],
+    matched_patterns: set[str] | None = None,
+) -> bool:
     """Match exclusions against the path and every ancestor (resolved or lexical)."""
     candidates = _path_and_ancestors(relative_path)
+    any_hit = False
     for pattern in patterns:
+        pattern_hit = False
         for form in _pattern_match_forms(pattern):
             for candidate in candidates:
                 if _matches_one_pattern(candidate, form):
-                    return True
-    return False
+                    pattern_hit = True
+                    break
+            if pattern_hit:
+                break
+        if not pattern_hit:
+            continue
+        any_hit = True
+        if matched_patterns is not None:
+            matched_patterns.add(pattern)
+        else:
+            return True
+    return any_hit
 
 
 def _coverage_for(
@@ -314,6 +387,43 @@ def _collect_excluded_inodes(
     return _ExcludedInodeScan(inodes=frozenset(excluded), incomplete=incomplete)
 
 
+def _count_in_root_file_links(root_fd: int) -> dict[tuple[int, int], int]:
+    """Count regular-file directory entries per inode under ``root_fd`` (no follow)."""
+    counts: dict[tuple[int, int], int] = {}
+    visited_dirs: set[tuple[int, int]] = set()
+
+    def walk(dir_fd: int) -> None:
+        identity = _fstat_identity(dir_fd)
+        if identity is None or identity in visited_dirs:
+            return
+        visited_dirs.add(identity)
+        try:
+            names = os.listdir(dir_fd)
+        except OSError:
+            return
+        for name in names:
+            try:
+                info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+            except OSError:
+                continue
+            mode = info.st_mode
+            if stat_module.S_ISREG(mode):
+                key = (info.st_dev, info.st_ino)
+                counts[key] = counts.get(key, 0) + 1
+            elif stat_module.S_ISDIR(mode) and not stat_module.S_ISLNK(mode):
+                try:
+                    child_fd = os.open(name, _DIR_OPEN_FLAGS, dir_fd=dir_fd)
+                except OSError:
+                    continue
+                try:
+                    walk(child_fd)
+                finally:
+                    os.close(child_fd)
+
+    walk(root_fd)
+    return counts
+
+
 def scan_local_folder(
     root: Path | str,
     *,
@@ -326,18 +436,21 @@ def scan_local_folder(
     Directory descent and file reads use ``O_NOFOLLOW`` (and ``O_DIRECTORY`` for
     dirs) so symlink swaps cannot escape the ingest root between check and use.
 
-    Exclusion patterns are normalized via :func:`normalize_exclusion_patterns`.
+    Exclusion patterns are resolved against ``root`` (absolute paths must fall
+    under it) then normalized via :func:`normalize_exclusion_pattern`. Patterns
+    that match no inventoried path raise ``ValueError`` (fail closed).
     """
     del access_scope  # used by pipeline; kept here for a stable connector signature
     limits = limits or AdmissionLimits()
-    exclusion_patterns = normalize_exclusion_patterns(exclusions)
     root_path = Path(root).resolve(strict=True)
     if not root_path.is_dir():
         raise NotADirectoryError(f"ingest root must be a directory: {root_path}")
+    exclusion_patterns = resolve_exclusion_patterns(exclusions, root=root_path)
 
     inventory: list[InventoryEntry] = []
     admitted: list[AdmittedPayload] = []
     visited_dirs: set[tuple[int, int]] = set()
+    matched_exclusion_patterns: set[str] = set()
     id_key = secrets.token_bytes(32)
 
     try:
@@ -349,6 +462,7 @@ def scan_local_folder(
         exclusion_scan = _collect_excluded_inodes(root_fd, exclusion_patterns)
         excluded_inodes: set[tuple[int, int]] = set(exclusion_scan.inodes)
         exclusion_scan_incomplete = exclusion_scan.incomplete
+        in_root_file_links = _count_in_root_file_links(root_fd)
 
         def visit(dir_fd: int, *, relative_prefix: str, depth: int) -> None:
             identity = _fstat_identity(dir_fd)
@@ -394,7 +508,11 @@ def scan_local_folder(
                 raw_relative = _join_relative(relative_prefix, name)
 
                 if "\\" in name or "\\" in raw_relative:
-                    if _matches_exclusion(raw_relative, exclusion_patterns):
+                    if _matches_exclusion(
+                        raw_relative,
+                        exclusion_patterns,
+                        matched_exclusion_patterns,
+                    ):
                         try:
                             info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
                             excluded_inodes.add((info.st_dev, info.st_ino))
@@ -413,7 +531,11 @@ def scan_local_folder(
                 try:
                     relative = normalize_relative_package_path(raw_relative)
                 except ValueError:
-                    if _matches_exclusion(raw_relative, exclusion_patterns):
+                    if _matches_exclusion(
+                        raw_relative,
+                        exclusion_patterns,
+                        matched_exclusion_patterns,
+                    ):
                         try:
                             info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
                             excluded_inodes.add((info.st_dev, info.st_ino))
@@ -446,7 +568,11 @@ def scan_local_folder(
                 is_dir = stat_module.S_ISDIR(info.st_mode)
                 is_reg = stat_module.S_ISREG(info.st_mode)
 
-                if _matches_exclusion(relative, exclusion_patterns):
+                if _matches_exclusion(
+                    relative,
+                    exclusion_patterns,
+                    matched_exclusion_patterns,
+                ):
                     excluded_inodes.add((info.st_dev, info.st_ino))
                     inventory.append(
                         _entry(
@@ -524,7 +650,11 @@ def scan_local_folder(
                                 )
                             )
                             continue
-                        if _matches_exclusion(target_relative, exclusion_patterns):
+                        if _matches_exclusion(
+                            target_relative,
+                            exclusion_patterns,
+                            matched_exclusion_patterns,
+                        ):
                             try:
                                 target_stat = resolved_target.stat()
                                 excluded_inodes.add((target_stat.st_dev, target_stat.st_ino))
@@ -645,6 +775,18 @@ def scan_local_folder(
                             )
                         )
                         continue
+                    # Multiply-linked files need every link under the ingest root.
+                    if opened.st_nlink > in_root_file_links.get(file_identity, 0):
+                        inventory.append(
+                            _entry(
+                                relative_package_path=relative,
+                                disposition=AdmissionDisposition.QUARANTINED,
+                                reason=AdmissionReason.HARD_LINK_ESCAPE,
+                                id_key=id_key,
+                                media_type=media_type_for_relative_path(relative),
+                            )
+                        )
+                        continue
 
                     size = opened.st_size
                     if size > limits.max_file_bytes:
@@ -702,6 +844,18 @@ def scan_local_folder(
         visit(root_fd, relative_prefix="", depth=0)
     finally:
         os.close(root_fd)
+
+    if exclusion_patterns:
+        unmatched = [
+            pattern
+            for pattern in exclusion_patterns
+            if pattern not in matched_exclusion_patterns
+        ]
+        if unmatched:
+            raise ValueError(
+                "exclusion pattern(s) matched no inventoried paths: "
+                + ", ".join(repr(item) for item in unmatched)
+            )
 
     inventory.sort(key=lambda item: item.relative_package_path)
     admitted.sort(key=lambda item: item.relative_package_path)
