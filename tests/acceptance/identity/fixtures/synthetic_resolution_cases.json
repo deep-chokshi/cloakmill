@@ -1,0 +1,239 @@
+{
+  "kind": "synthetic-identity-acceptance",
+  "namespace_id": "ns-eval-demo",
+  "cases": [
+    {
+      "case_id": "strong-email-merge",
+      "mentions": [
+        {
+          "observation_id": "obs_email_a",
+          "entity_type": "email_address",
+          "normalized_value": "maya@acme.example",
+          "part_id": "msg-1",
+          "artifact_version_id": "art-1",
+          "first_name": "Maya"
+        },
+        {
+          "observation_id": "obs_email_b",
+          "entity_type": "email_address",
+          "normalized_value": "Maya@Acme.Example",
+          "part_id": "msg-2",
+          "artifact_version_id": "art-1",
+          "first_name": "Maya"
+        }
+      ],
+      "directory": [],
+      "expected_links": [
+        {
+          "entity_id": "entity:person:maya",
+          "entity_kind": "person",
+          "expected_decision": "accept",
+          "observation_ids": ["obs_email_a", "obs_email_b"],
+          "case_tags": ["strong_anchor"]
+        }
+      ],
+      "assert": {
+        "entity_count": 1,
+        "max_wrong_merge_rate": 0.0,
+        "require_review": false
+      }
+    },
+    {
+      "case_id": "ambiguous-first-name",
+      "mentions": [
+        {
+          "observation_id": "obs_maya_shah",
+          "entity_type": "email_address",
+          "normalized_value": "maya.shah@acme.example",
+          "part_id": "msg-1",
+          "artifact_version_id": "art-1",
+          "first_name": "Maya"
+        },
+        {
+          "observation_id": "obs_maya_chen",
+          "entity_type": "email_address",
+          "normalized_value": "maya.chen@acme.example",
+          "part_id": "msg-2",
+          "artifact_version_id": "art-1",
+          "first_name": "Maya"
+        }
+      ],
+      "directory": [],
+      "expected_links": [
+        {
+          "entity_id": "entity:person:maya-shah",
+          "entity_kind": "person",
+          "expected_decision": "accept",
+          "observation_ids": ["obs_maya_shah"],
+          "case_tags": ["strong_anchor", "shared_first_name"]
+        },
+        {
+          "entity_id": "entity:person:maya-chen",
+          "entity_kind": "person",
+          "expected_decision": "accept",
+          "observation_ids": ["obs_maya_chen"],
+          "case_tags": ["strong_anchor", "shared_first_name"]
+        },
+        {
+          "entity_id": "entity:review:maya-first-name",
+          "entity_kind": "person",
+          "expected_decision": "abstain_review",
+          "observation_ids": ["obs_maya_shah", "obs_maya_chen"],
+          "case_tags": ["shared_first_name"]
+        }
+      ],
+      "assert": {
+        "entity_count": 2,
+        "max_wrong_merge_rate": 0.0,
+        "require_review": true,
+        "exception_reason": "ambiguous_first_name_only"
+      }
+    },
+    {
+      "case_id": "shared-mailbox-operators",
+      "mentions": [
+        {
+          "observation_id": "obs_helpdesk",
+          "entity_type": "email_address",
+          "normalized_value": "helpdesk@acme.example",
+          "part_id": "msg-1",
+          "artifact_version_id": "art-1"
+        },
+        {
+          "observation_id": "obs_op_maya",
+          "entity_type": "email_address",
+          "normalized_value": "maya@acme.example",
+          "part_id": "msg-2",
+          "artifact_version_id": "art-1"
+        },
+        {
+          "observation_id": "obs_op_jordan",
+          "entity_type": "email_address",
+          "normalized_value": "jordan@acme.example",
+          "part_id": "msg-3",
+          "artifact_version_id": "art-1"
+        }
+      ],
+      "directory": [
+        {
+          "anchor_kind": "email",
+          "normalized_value": "helpdesk@acme.example",
+          "entity_kind": "account",
+          "entity_key": "acct-helpdesk",
+          "is_shared": true,
+          "operator_person_keys": ["person-maya", "person-jordan"]
+        },
+        {
+          "anchor_kind": "email",
+          "normalized_value": "maya@acme.example",
+          "entity_kind": "person",
+          "entity_key": "person-maya",
+          "is_shared": false,
+          "operator_person_keys": []
+        },
+        {
+          "anchor_kind": "email",
+          "normalized_value": "jordan@acme.example",
+          "entity_kind": "person",
+          "entity_key": "person-jordan",
+          "is_shared": false,
+          "operator_person_keys": []
+        }
+      ],
+      "expected_links": [
+        {
+          "entity_id": "entity:account:helpdesk",
+          "entity_kind": "account",
+          "expected_decision": "keep_separate",
+          "observation_ids": ["obs_helpdesk"],
+          "case_tags": ["shared_mailbox"]
+        },
+        {
+          "entity_id": "entity:person:maya",
+          "entity_kind": "person",
+          "expected_decision": "accept",
+          "observation_ids": ["obs_op_maya"],
+          "case_tags": ["shared_mailbox"]
+        },
+        {
+          "entity_id": "entity:person:jordan",
+          "entity_kind": "person",
+          "expected_decision": "accept",
+          "observation_ids": ["obs_op_jordan"],
+          "case_tags": ["shared_mailbox"]
+        }
+      ],
+      "assert": {
+        "entity_count": 3,
+        "max_wrong_merge_rate": 0.0,
+        "require_review": false,
+        "shared_account_obs": "obs_helpdesk"
+      }
+    },
+    {
+      "case_id": "cross-source-roster-bind",
+      "mentions": [
+        {
+          "observation_id": "obs_roster_email",
+          "entity_type": "email_address",
+          "normalized_value": "alex@acme.example",
+          "part_id": "roster-1",
+          "artifact_version_id": "art-1"
+        },
+        {
+          "observation_id": "obs_roster_emp",
+          "entity_type": "employee_id",
+          "normalized_value": "E-99AA00",
+          "part_id": "ticket-9",
+          "artifact_version_id": "art-2"
+        },
+        {
+          "observation_id": "obs_account",
+          "entity_type": "account_id",
+          "normalized_value": "AC-812",
+          "part_id": "crm-1",
+          "artifact_version_id": "art-3"
+        }
+      ],
+      "directory": [
+        {
+          "anchor_kind": "email",
+          "normalized_value": "alex@acme.example",
+          "entity_kind": "person",
+          "entity_key": "person-alex",
+          "is_shared": false,
+          "operator_person_keys": []
+        },
+        {
+          "anchor_kind": "employee_id",
+          "normalized_value": "E-99AA00",
+          "entity_kind": "person",
+          "entity_key": "person-alex",
+          "is_shared": false,
+          "operator_person_keys": []
+        }
+      ],
+      "expected_links": [
+        {
+          "entity_id": "entity:person:alex",
+          "entity_kind": "person",
+          "expected_decision": "accept",
+          "observation_ids": ["obs_roster_email", "obs_roster_emp"],
+          "case_tags": ["strong_anchor", "roster_member"]
+        },
+        {
+          "entity_id": "entity:account:812",
+          "entity_kind": "account",
+          "expected_decision": "accept",
+          "observation_ids": ["obs_account"],
+          "case_tags": ["account_distinct"]
+        }
+      ],
+      "assert": {
+        "entity_count": 2,
+        "max_wrong_merge_rate": 0.0,
+        "require_review": false
+      }
+    }
+  ]
+}

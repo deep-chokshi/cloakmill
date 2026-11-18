@@ -58,7 +58,7 @@ defines the layers and their implementation boundaries.
 - [ ] Define source records, original locators, evidence, and transformation contracts.
 - [ ] Import local folders and JSON/CSV snapshots with an explicit coverage report.
 - [x] Detect known identifiers and rule-based sensitive fields.
-- [ ] Resolve identities with strong anchors and abstain on ambiguous matches.
+- [x] Resolve identities with strong anchors and abstain on ambiguous matches.
 - [ ] Generate raw 1,000- and 10,000-record synthetic corpora with separate complete expected observations and identity links; evaluate missed detections, wrong merges and review workload.
 - [ ] Feed automatic discovery and grouped exceptions into the UI; audit sampled automatic decisions.
 - [ ] Create versioned, namespace-scoped synthetic profiles.

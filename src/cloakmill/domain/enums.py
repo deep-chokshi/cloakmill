@@ -45,3 +45,29 @@ class LocatorKind(StrEnum):
 
     TEXT_OFFSET = "text_offset"
     FIELD_PATH = "field_path"
+
+
+class EntityKind(StrEnum):
+    """Canonical entity kinds kept distinct during identity resolution."""
+
+    PERSON = "person"
+    ACCOUNT = "account"
+    ORGANIZATION = "organization"
+
+
+class DecisionOutcome(StrEnum):
+    """Identity decision outcomes: accept, keep separate, or send to review."""
+
+    ACCEPT = "accept"
+    SEPARATE = "separate"
+    REVIEW = "review"
+
+
+class AnchorKind(StrEnum):
+    """Anchor kinds used for candidate retrieval and merge policy."""
+
+    EMAIL = "email"
+    EMPLOYEE_ID = "employee_id"
+    ACCOUNT_ID = "account_id"
+    DISPLAY_NAME = "display_name"
+    FIRST_NAME = "first_name"
