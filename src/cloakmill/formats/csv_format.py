@@ -25,6 +25,8 @@ def extract_csv_parts(
 ) -> CsvExtractResult:
     """Parse UTF-8 CSV with a header row and emit per-cell structured parts.
 
+    The header row itself is emitted as Parts under ``("header", col_index)`` so a
+    headerless export cannot silently drop its first record from coverage.
     Cells beyond the header width are emitted with a positional integer path
     segment so ragged rows cannot silently disappear from coverage.
     """
@@ -48,6 +50,21 @@ def extract_csv_parts(
 
     parts: list[Part] = []
     ordinal = 0
+
+    # Track header cells as surfaces so headerless first-row data is not dropped.
+    for col_index, name in enumerate(header):
+        parts.append(
+            Part(
+                opaque_id=part_id_for(artifact_version_id, "csv", ordinal),
+                artifact_version_id=artifact_version_id,
+                surface_kind=SurfaceKind.STRUCTURED_FIELD,
+                original_locator=FieldPathLocator(path=("header", col_index)),
+                coverage_state=CoverageState.PROCESSED,
+                content_length=len(name),
+            )
+        )
+        ordinal += 1
+
     for row_index, row in enumerate(rows[1:]):
         width = max(len(header), len(row))
         for col_index in range(width):

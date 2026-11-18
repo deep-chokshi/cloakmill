@@ -385,9 +385,36 @@ def test_ragged_csv_emits_positional_extra_cells(tmp_path: Path) -> None:
         for part in result.parts
         if isinstance(part.original_locator, FieldPathLocator)
     ]
+    assert ("header", 0) in paths
+    assert ("header", 1) in paths
     assert ("rows", 0, "email") in paths
     assert ("rows", 0, "role") in paths
     assert ("rows", 0, 2) in paths
+
+
+def test_headerless_csv_emits_first_row_as_header_parts(tmp_path: Path) -> None:
+    """Headerless exports must not drop the first record from coverage."""
+    root = tmp_path / "pkg"
+    _write(
+        root / "export.csv",
+        "maya@acme.example,owner,123-45-6789\n",
+    )
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    assert len(result.artifacts) == 1
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["export.csv"].coverage_state is CoverageState.PROCESSED
+    paths = {
+        part.original_locator.path: part.content_length
+        for part in result.parts
+        if isinstance(part.original_locator, FieldPathLocator)
+    }
+    assert ("header", 0) in paths
+    assert ("header", 1) in paths
+    assert ("header", 2) in paths
+    assert paths[("header", 0)] == len("maya@acme.example")
+    assert paths[("header", 1)] == len("owner")
+    assert paths[("header", 2)] == len("123-45-6789")
 
 
 def test_backslash_filename_is_quarantined(tmp_path: Path) -> None:
