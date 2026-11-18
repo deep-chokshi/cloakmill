@@ -24,9 +24,11 @@ from cloakmill.domain import (
     dumps,
     loads,
     to_jsonable,
+    validate_artifact_version,
     validate_locator,
     validate_observation,
     validate_part,
+    validate_private_integrity_digest,
 )
 
 DOMAIN_ROOT = Path(__file__).resolve().parents[3] / "src" / "cloakmill" / "domain"
@@ -193,6 +195,52 @@ def test_from_dict_rejects_invalid_serialized_locators() -> None:
                 "access_scope": "project:syn-demo",
             }
         )
+
+
+@pytest.mark.parametrize(
+    "digest",
+    [
+        "sha256:" + ("ab" * 16),  # 32 hex — truncated
+        "sha512:" + ("ab" * 32),  # 64 hex — sha256 length under sha512 label
+        "sha256:" + ("ab" * 64),  # 128 hex — over-long for sha256
+        "sha384:" + ("ab" * 32),  # wrong length for sha384
+        "md5:" + ("ab" * 16),
+        "sha256:ABCDEF" + ("0" * 58),  # uppercase rejected
+    ],
+)
+def test_validate_artifact_version_rejects_digest_algorithm_length_mismatch(
+    digest: str,
+) -> None:
+    with pytest.raises(DomainValidationError):
+        validate_private_integrity_digest(digest)
+    with pytest.raises(DomainValidationError):
+        validate_artifact_version(
+            ArtifactVersion(
+                opaque_id="art-syn-digest",
+                source_version="v1",
+                private_integrity_digest=digest,
+                access_scope="project:syn-demo",
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "hex_len"),
+    [("sha256", 64), ("sha384", 96), ("sha512", 128)],
+)
+def test_validate_artifact_version_accepts_full_algorithm_digests(
+    algorithm: str, hex_len: int
+) -> None:
+    digest = f"{algorithm}:{'ab' * (hex_len // 2)}"
+    validate_private_integrity_digest(digest)
+    validate_artifact_version(
+        ArtifactVersion(
+            opaque_id="art-syn-digest-ok",
+            source_version="v1",
+            private_integrity_digest=digest,
+            access_scope="project:syn-demo",
+        )
+    )
 
 
 @pytest.mark.parametrize("bad_id", [None, 123, True])

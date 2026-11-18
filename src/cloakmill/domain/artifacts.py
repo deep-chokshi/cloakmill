@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,7 +14,12 @@ from cloakmill.domain.locators import (
     validate_locator,
 )
 
-_DIGEST_RE = re.compile(r"^(sha256|sha384|sha512):[0-9a-f]{32,128}$")
+# Hex character counts for full digests (not truncated prefixes).
+_DIGEST_HEX_LENGTHS: dict[str, int] = {
+    "sha256": 64,
+    "sha384": 96,
+    "sha512": 128,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,16 +167,32 @@ def validate_normalization_span(span: NormalizationSpan) -> None:
         raise DomainValidationError("original_end must be >= original_start")
 
 
+def validate_private_integrity_digest(digest: object) -> None:
+    """Reject digests whose hex length does not match the named algorithm."""
+    if not isinstance(digest, str) or ":" not in digest:
+        raise DomainValidationError(
+            "private_integrity_digest must look like '<alg>:<hex>' "
+            f"(supported algs: {', '.join(_DIGEST_HEX_LENGTHS)}); got {digest!r}"
+        )
+    algorithm, hex_digest = digest.split(":", 1)
+    expected_length = _DIGEST_HEX_LENGTHS.get(algorithm)
+    if expected_length is None:
+        raise DomainValidationError(
+            "private_integrity_digest algorithm must be one of "
+            f"{', '.join(_DIGEST_HEX_LENGTHS)}; got {algorithm!r}"
+        )
+    if len(hex_digest) != expected_length or any(ch not in "0123456789abcdef" for ch in hex_digest):
+        raise DomainValidationError(
+            f"private_integrity_digest for {algorithm} must be exactly "
+            f"{expected_length} lowercase hex characters; got length {len(hex_digest)}"
+        )
+
+
 def validate_artifact_version(artifact: ArtifactVersion) -> None:
     require_opaque_id(artifact.opaque_id, "opaque_id")
     require_non_empty_str(artifact.source_version, "source_version")
     require_non_empty_str(artifact.access_scope, "access_scope")
-    digest = artifact.private_integrity_digest
-    if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
-        raise DomainValidationError(
-            "private_integrity_digest must look like '<alg>:<hex>' "
-            f"(supported algs: sha256, sha384, sha512); got {digest!r}"
-        )
+    validate_private_integrity_digest(artifact.private_integrity_digest)
     if artifact.media_type is not None:
         require_non_empty_str(artifact.media_type, "media_type")
 

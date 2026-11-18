@@ -6,6 +6,7 @@ from cloakmill.domain.artifacts import (
     Part,
     validate_artifact_version,
     validate_part,
+    validate_private_integrity_digest,
 )
 from cloakmill.domain.enums import (
     CoverageState,
@@ -59,5 +60,6 @@ __all__ = [
     "validate_locator",
     "validate_observation",
     "validate_part",
+    "validate_private_integrity_digest",
     "validate_text_offset_locator",
 ]
