@@ -165,7 +165,7 @@ def test_resolve_assign_freeze_incremental_and_collision() -> None:
     assert "maya@acme.example" not in str(export)
     assert "jordan@acme.example" not in str(export)
     assert "E-AB12CD" not in str(export)
-    assert export["snapshot"]["private_integrity_digest"].startswith("sha256:")
+    assert export["snapshot"]["private_integrity_digest"].startswith("hmac-sha256:")
     # Entity ids are not recoverable via unkeyed digests of candidate anchors.
     for candidate in ("maya@acme.example", "jordan@acme.example", "E-AB12CD", "AC-104"):
         unkeyed = hashlib.sha256(

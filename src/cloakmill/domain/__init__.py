@@ -42,6 +42,7 @@ from cloakmill.domain.mapping import (
     validate_entity_graph_version,
     validate_mapping_assignment,
     validate_mapping_snapshot,
+    validate_mapping_snapshot_structure,
     validate_namespace_key_ref,
     validate_patch_plan_entry,
 )
@@ -94,6 +95,7 @@ __all__ = [
     "validate_locator",
     "validate_mapping_assignment",
     "validate_mapping_snapshot",
+    "validate_mapping_snapshot_structure",
     "validate_namespace_key_ref",
     "validate_observation",
     "validate_part",

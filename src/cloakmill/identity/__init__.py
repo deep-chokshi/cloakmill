@@ -17,6 +17,7 @@ from cloakmill.domain.mapping import (
     mapping_snapshots_equal,
     validate_entity_graph_version,
     validate_mapping_snapshot,
+    validate_mapping_snapshot_structure,
     validate_namespace_key_ref,
     validate_patch_plan_entry,
 )
@@ -137,6 +138,7 @@ __all__ = [
     "validate_directory_anchor",
     "validate_entity_graph_version",
     "validate_mapping_snapshot",
+    "validate_mapping_snapshot_structure",
     "validate_mention_evidence",
     "validate_namespace_key_ref",
     "validate_namespace_scope",

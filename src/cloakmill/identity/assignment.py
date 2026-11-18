@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from cloakmill.domain.fields import require_non_empty_str, require_opaque_id
+from cloakmill.domain.fields import (
+    length_prefixed_utf8,
+    require_opaque_id,
+    require_version_token,
+)
 from cloakmill.domain.mapping import (
     EntityGraphVersion,
     MappingAssignment,
@@ -49,6 +53,7 @@ class MappingAssignmentDraft:
     profiles: tuple[SyntheticProfile, ...]
     reused_entity_ids: tuple[str, ...]
     newly_assigned_entity_ids: tuple[str, ...]
+    namespace_secret: bytes = field(repr=False, compare=False)
 
     def profile_by_id(self) -> dict[str, SyntheticProfile]:
         return {profile.opaque_id: profile for profile in self.profiles}
@@ -60,6 +65,17 @@ class MappingAssignmentDraft:
         except KeyError as exc:
             raise AssignmentError(f"no assignment for entity {entity_id!r}") from exc
         return self.profile_by_id()[profile_id]
+
+    def __repr__(self) -> str:
+        return (
+            f"MappingAssignmentDraft(namespace={self.namespace.namespace_id!r}, "
+            f"snapshot_version={self.snapshot_version!r}, "
+            f"assignments={len(self.assignments)}, "
+            f"namespace_secret=<redacted:{len(self.namespace_secret)}B>)"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
 
 class NamespaceScopedProfileAssigner:
@@ -84,8 +100,8 @@ class NamespaceScopedProfileAssigner:
         """Assign profiles for all graph entities, reusing prior bindings when present."""
         validate_accepted_entity_graph(graph)
         validate_namespace_scope(namespace)
-        require_non_empty_str(snapshot_version, "snapshot_version")
-        require_non_empty_str(policy_version, "policy_version")
+        require_version_token(snapshot_version, "snapshot_version")
+        require_version_token(policy_version, "policy_version")
         require_matching_namespace(
             expected=namespace.namespace_id,
             actual=graph.namespace_id,
@@ -162,6 +178,7 @@ class NamespaceScopedProfileAssigner:
             profiles=tuple(profiles),
             reused_entity_ids=tuple(reused),
             newly_assigned_entity_ids=tuple(newly),
+            namespace_secret=bytes(key_material.key_bytes),
         )
 
     def _allocate_new_profile(
@@ -203,6 +220,7 @@ def build_mapping_snapshot(draft: MappingAssignmentDraft) -> MappingSnapshot:
         policy_version=draft.policy_version,
         namespace_key_ref=draft.key_ref,
         assignments=draft.assignments,
+        namespace_secret=draft.namespace_secret,
     )
 
 
@@ -241,6 +259,11 @@ def _index_prior(
 
 
 def _graph_version_id(graph: AcceptedEntityGraph) -> str:
-    material = "\0".join((graph.namespace_id, graph.graph_version, *sorted(graph.entity_ids)))
-    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+    require_version_token(graph.graph_version, "graph_version")
+    material = length_prefixed_utf8(
+        graph.namespace_id,
+        graph.graph_version,
+        *sorted(graph.entity_ids),
+    )
+    digest = hashlib.sha256(material).hexdigest()[:24]
     return f"egv-{digest}"

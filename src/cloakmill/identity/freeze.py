@@ -12,6 +12,7 @@ from cloakmill.domain.mapping import (
     MappingSnapshot,
     mapping_snapshots_equal,
     validate_mapping_snapshot,
+    validate_mapping_snapshot_structure,
 )
 from cloakmill.identity.assignment import MappingAssignmentDraft, build_mapping_snapshot
 from cloakmill.identity.errors import AssignmentError, FrozenMappingError
@@ -31,7 +32,7 @@ class FrozenMappingBundle:
     profiles: tuple[SyntheticProfile, ...]
 
     def __post_init__(self) -> None:
-        validate_mapping_snapshot(self.snapshot)
+        validate_mapping_snapshot_structure(self.snapshot)
         profile_ids = {profile.opaque_id for profile in self.profiles}
         if len(profile_ids) != len(self.profiles):
             raise AssignmentError("frozen bundle contains duplicate profile ids")
@@ -85,6 +86,8 @@ def freeze_mapping(draft: MappingAssignmentDraft) -> FrozenMappingBundle:
     if not isinstance(draft, MappingAssignmentDraft):
         raise AssignmentError("freeze_mapping requires a MappingAssignmentDraft")
     snapshot = build_mapping_snapshot(draft)
+    # Authenticate the HMAC commitment with the draft's private namespace secret.
+    validate_mapping_snapshot(snapshot, namespace_secret=draft.namespace_secret)
     return FrozenMappingBundle(
         snapshot=snapshot,
         graph_version=draft.graph_version,
