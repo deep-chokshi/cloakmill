@@ -24,6 +24,7 @@ class AdmissionReason(StrEnum):
     EXPLICIT_EXCLUSION = "explicit_exclusion"
     SYMLINK_ESCAPE = "symlink_escape"
     SYMLINK_CYCLE = "symlink_cycle"
+    DIRECTORY_SYMLINK = "directory_symlink"
     PATH_TRAVERSAL = "path_traversal"
     MAX_DEPTH_EXCEEDED = "max_depth_exceeded"
     OVERSIZED = "oversized"

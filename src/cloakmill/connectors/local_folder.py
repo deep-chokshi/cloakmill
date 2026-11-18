@@ -224,10 +224,10 @@ def scan_local_folder(
                 )
                 continue
 
-            resolved_target: Path | None = None
             if child.is_symlink():
+                # strict=True fails closed on loops/dangling links across 3.12 and 3.13.
                 try:
-                    resolved_target = child.resolve(strict=False)
+                    resolved_target = child.resolve(strict=True)
                 except (OSError, RuntimeError):
                     inventory.append(
                         _entry(
@@ -257,7 +257,6 @@ def scan_local_folder(
                         )
                     )
                     continue
-                # Symlink to the ingest root itself is a cycle, not an empty package path.
                 if target_rel_raw not in ("", "."):
                     try:
                         target_relative = normalize_relative_package_path(target_rel_raw)
@@ -279,18 +278,19 @@ def scan_local_folder(
                             )
                         )
                         continue
-                elif child.is_dir():
+                # Never descend through directory symlinks: alias paths would bypass
+                # exclusions written against the real package path.
+                if resolved_target.is_dir():
                     inventory.append(
                         _entry(
                             relative_package_path=relative,
                             disposition=AdmissionDisposition.QUARANTINED,
-                            reason=AdmissionReason.SYMLINK_CYCLE,
+                            reason=AdmissionReason.DIRECTORY_SYMLINK,
                         )
                     )
                     continue
 
             if child.is_dir():
-                # Directory symlink cycles are caught via visited_dirs on descent.
                 visit(child, depth + 1)
                 continue
 

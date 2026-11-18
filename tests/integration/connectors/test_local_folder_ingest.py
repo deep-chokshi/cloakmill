@@ -272,7 +272,7 @@ def test_symlink_loop_is_quarantined_not_fatal(tmp_path: Path) -> None:
     assert by_path["loop.txt"].reason is AdmissionReason.SYMLINK_CYCLE
 
 
-def test_directory_symlink_cycle_is_quarantined_once(tmp_path: Path) -> None:
+def test_directory_symlink_is_not_descended(tmp_path: Path) -> None:
     root = tmp_path / "pkg"
     root.mkdir()
     _write(root / "data.json", '{"email":"maya@acme.example"}\n')
@@ -283,12 +283,31 @@ def test_directory_symlink_cycle_is_quarantined_once(tmp_path: Path) -> None:
     by_path = {entry.relative_package_path: entry for entry in result.inventory}
     assert by_path["data.json"].disposition is AdmissionDisposition.ADMITTED
     assert by_path["l1"].disposition is AdmissionDisposition.QUARANTINED
-    assert by_path["l1"].reason is AdmissionReason.SYMLINK_CYCLE
+    assert by_path["l1"].reason is AdmissionReason.DIRECTORY_SYMLINK
     assert by_path["l2"].disposition is AdmissionDisposition.QUARANTINED
-    assert by_path["l2"].reason is AdmissionReason.SYMLINK_CYCLE
-    # One admission only — cycles must not re-read data.json.
+    assert by_path["l2"].reason is AdmissionReason.DIRECTORY_SYMLINK
+    # One admission only — directory symlinks must not re-read data.json.
     assert len(result.admitted_payloads) == 1
     assert len(result.artifacts) == 1
+
+
+def test_directory_symlink_cannot_bypass_file_exclusion(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    _write(root / "secrets" / "token.txt", "not-a-real-secret\n")
+    (root / "a_alias").symlink_to(root / "secrets")
+
+    result = ingest_local_folder(
+        root,
+        access_scope="project:syn-demo",
+        exclusions=("secrets/token.txt",),
+    )
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["a_alias"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["a_alias"].reason is AdmissionReason.DIRECTORY_SYMLINK
+    assert by_path["secrets/token.txt"].disposition is AdmissionDisposition.EXCLUDED
+    assert "a_alias/token.txt" not in by_path
+    assert result.admitted_payloads == ()
+    assert result.artifacts == ()
 
 
 def test_deep_json_recursion_is_parse_failed(tmp_path: Path) -> None:
