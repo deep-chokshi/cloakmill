@@ -14,8 +14,10 @@ cloakmill/
 │   ├── validation/      Privacy, structural, and task-utility checks
 │   └── pipeline/        Job coordination and release manifests
 ├── tests/               Synthetic behavioral tests as features land
+│   └── fixtures/eval/   Held-out corpus expectations (engine-inaccessible)
+├── scripts/             Dev/eval generators outside the runtime package
 ├── apps/review-ui/      Next.js frontend foundation; fictional sample backend only
-├── examples/synthetic/  Redistributable illustrative examples
+├── examples/synthetic/  Illustrative examples and eval-v1 raw corpora
 ├── prototypes/workspace/ Fictional, clickable UX reference; separate from the app
 ├── docs/
 │   ├── assets/          Repository-local product visuals

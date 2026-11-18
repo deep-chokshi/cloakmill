@@ -1,0 +1,4 @@
+ENGINE_INACCESSIBLE
+Held-out evaluation expectations live here.
+Detection, identity, transforms, and pipeline runtime code must never import
+or load files from this directory.

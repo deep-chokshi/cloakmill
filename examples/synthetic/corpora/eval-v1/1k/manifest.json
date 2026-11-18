@@ -1,0 +1,36 @@
+{
+  "account_count": 9,
+  "corpus_series": "eval-v1",
+  "generator_version": "synthetic-corpus-generator/1.0.0",
+  "held_out": {
+    "engine_accessible": false,
+    "expected_identity_links": "expected/expected_identity_links.jsonl",
+    "expected_observations": "expected/expected_observations.jsonl"
+  },
+  "identity_link_count": 73,
+  "observation_count": 5405,
+  "person_count": 48,
+  "raw_files": {
+    "raw/contacts.csv": "ef7267cf80ea25ef9ea503eedd0fe32998bfbb157e672122bdb84a3ca9c70db0",
+    "raw/messages.json": "d5bf86ad860e2731c01ad5f74cb98f464bca429c2c615d30e033dddf3d87117d",
+    "raw/notes.txt": "321963cf3df0c8b0c8efe49f0cff7fcfb195d0a569d7be55118175b46dd94911"
+  },
+  "record_count_target": 1000,
+  "reserved_email_domains": [
+    "acme.example",
+    "birch.example",
+    "contoso.example",
+    "fabrikam.example",
+    "northwind.example"
+  ],
+  "scenarios": [
+    "repeated_people",
+    "shared_first_name_ambiguity",
+    "shared_mailbox_operators",
+    "email_ownership_change"
+  ],
+  "schema_version": "provisional-f01-v1",
+  "seed": 20252118,
+  "size_key": "1k",
+  "source_version": "eval-v1-1k"
+}
