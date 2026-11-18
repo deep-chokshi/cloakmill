@@ -150,7 +150,7 @@ def extract_json_parts(
         document = json.loads(text)
     except RecursionError:
         return JsonExtractResult(parts=(), parse_error="RecursionError")
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         return JsonExtractResult(parts=(), parse_error=type(exc).__name__)
 
     leaves: list[tuple[tuple[str | int, ...], str]] = []
@@ -201,7 +201,7 @@ def extract_jsonl_parts(
             document = json.loads(line)
         except RecursionError:
             return JsonExtractResult(parts=(), parse_error="RecursionError")
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ValueError):
             return JsonExtractResult(parts=(), parse_error="JSONDecodeError")
         leaves: list[tuple[tuple[str | int, ...], str]] = []
         skipped = [0]
