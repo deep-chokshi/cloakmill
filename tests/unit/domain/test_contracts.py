@@ -195,6 +195,83 @@ def test_from_dict_rejects_invalid_serialized_locators() -> None:
         )
 
 
+@pytest.mark.parametrize("bad_id", [None, 123, True])
+def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
+    """JSON null/non-strings must not coerce into accepted opaque ids like \"None\"."""
+    digest = "sha256:" + ("ab" * 32)
+    with pytest.raises(DomainValidationError):
+        ArtifactVersion.from_dict(
+            {
+                "opaque_id": bad_id,
+                "source_version": "v1",
+                "private_integrity_digest": digest,
+                "access_scope": "project:syn-demo",
+            }
+        )
+    with pytest.raises(DomainValidationError):
+        Part.from_dict(
+            {
+                "opaque_id": bad_id,
+                "artifact_version_id": "art-syn-001",
+                "surface_kind": "text",
+                "original_locator": {
+                    "kind": "text_offset",
+                    "unit": "codepoints",
+                    "start": 0,
+                    "end": 1,
+                },
+                "coverage_state": "processed",
+            }
+        )
+    with pytest.raises(DomainValidationError):
+        Observation.from_dict(
+            {
+                "opaque_id": bad_id,
+                "part_id": "part-syn-body",
+                "artifact_version_id": "art-syn-001",
+                "entity_type": "EMAIL_ADDRESS",
+                "evidence_locator": {
+                    "kind": "text_offset",
+                    "unit": "codepoints",
+                    "start": 0,
+                    "end": 1,
+                },
+                "recognizer_version": "rule.email.v1",
+                "score_kind": "pattern_match",
+            }
+        )
+    with pytest.raises(DomainValidationError):
+        EvidenceRef.from_dict(
+            {
+                "opaque_id": "ev-syn-1",
+                "part_id": bad_id,
+                "locator": {
+                    "kind": "text_offset",
+                    "unit": "codepoints",
+                    "start": 0,
+                    "end": 1,
+                },
+            }
+        )
+    with pytest.raises(DomainValidationError):
+        Observation.from_dict(
+            {
+                "opaque_id": "obs-syn-1",
+                "part_id": "part-syn-body",
+                "artifact_version_id": "art-syn-001",
+                "entity_type": "EMAIL_ADDRESS",
+                "evidence_locator": {
+                    "kind": "text_offset",
+                    "unit": "codepoints",
+                    "start": 0,
+                    "end": 1,
+                },
+                "recognizer_version": bad_id,
+                "score_kind": "pattern_match",
+            }
+        )
+
+
 def test_domain_modules_do_not_import_adapters_or_pipeline() -> None:
     offenders: list[str] = []
     for path in sorted(DOMAIN_ROOT.glob("*.py")):

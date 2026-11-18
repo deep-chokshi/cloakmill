@@ -76,10 +76,10 @@ class ArtifactVersion:
         if not isinstance(data, dict):
             raise DomainValidationError("artifact version must be an object")
         artifact = cls(
-            opaque_id=str(data.get("opaque_id", "")),
-            source_version=str(data.get("source_version", "")),
-            private_integrity_digest=str(data.get("private_integrity_digest", "")),
-            access_scope=str(data.get("access_scope", "")),
+            opaque_id=data.get("opaque_id", ""),
+            source_version=data.get("source_version", ""),
+            private_integrity_digest=data.get("private_integrity_digest", ""),
+            access_scope=data.get("access_scope", ""),
             media_type=data.get("media_type"),
         )
         validate_artifact_version(artifact)
@@ -134,8 +134,8 @@ class Part:
             raise DomainValidationError("content_length must be an int when present")
 
         part = cls(
-            opaque_id=str(data.get("opaque_id", "")),
-            artifact_version_id=str(data.get("artifact_version_id", "")),
+            opaque_id=data.get("opaque_id", ""),
+            artifact_version_id=data.get("artifact_version_id", ""),
             surface_kind=surface_kind,
             original_locator=locator,
             coverage_state=coverage_state,

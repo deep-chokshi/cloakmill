@@ -45,8 +45,8 @@ class EvidenceRef:
         except (KeyError, TypeError, ValueError) as exc:
             raise DomainValidationError(f"invalid evidence ref locator: {exc}") from exc
         ref = cls(
-            opaque_id=str(data.get("opaque_id", "")),
-            part_id=str(data.get("part_id", "")),
+            opaque_id=data.get("opaque_id", ""),
+            part_id=data.get("part_id", ""),
             locator=locator,
             recognizer_version=data.get("recognizer_version"),
         )
@@ -108,12 +108,12 @@ class Observation:
             raise DomainValidationError("score_value must be a number when present")
 
         observation = cls(
-            opaque_id=str(data.get("opaque_id", "")),
-            part_id=str(data.get("part_id", "")),
-            artifact_version_id=str(data.get("artifact_version_id", "")),
-            entity_type=str(data.get("entity_type", "")),
+            opaque_id=data.get("opaque_id", ""),
+            part_id=data.get("part_id", ""),
+            artifact_version_id=data.get("artifact_version_id", ""),
+            entity_type=data.get("entity_type", ""),
             evidence_locator=evidence_locator,
-            recognizer_version=str(data.get("recognizer_version", "")),
+            recognizer_version=data.get("recognizer_version", ""),
             score_kind=score_kind,
             score_value=None if score_value is None else float(score_value),
             proposal_snapshot_ref=data.get("proposal_snapshot_ref"),
