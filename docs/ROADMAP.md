@@ -63,7 +63,7 @@ defines the layers and their implementation boundaries.
 - [ ] Feed automatic discovery and grouped exceptions into the UI; audit sampled automatic decisions.
 - [ ] Create versioned, namespace-scoped synthetic profiles.
 - [x] Apply deterministic replacements while preserving structured references.
-- [ ] Validate privacy findings and record/schema integrity.
+- [x] Validate privacy findings and record/schema integrity.
 - [ ] Export a sealed dataset and non-sensitive release manifest through a CLI.
 - [ ] Read Slack and email export packages, including linked attachments.
 
