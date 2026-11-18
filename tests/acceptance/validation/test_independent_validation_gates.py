@@ -27,9 +27,12 @@ from cloakmill.transforms import (
     plan_patches,
 )
 from cloakmill.validation import (
+    CODE_COVERAGE_EXCLUDED_LEAKED,
     CODE_COVERAGE_GAP,
+    CODE_COVERAGE_OBSERVED_TAMPER,
     CODE_PRIVACY_CANARY_DETECTED,
     CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
+    CODE_PRIVACY_UNSUPPORTED_KIND,
     CODE_STRUCTURE_JOIN_MISMATCH,
     CODE_STRUCTURE_REPARSE_FAILED,
     CODE_STRUCTURE_SCHEMA_MISMATCH,
@@ -566,3 +569,140 @@ def test_malformed_json_candidate_blocks_with_reparse_failed() -> None:
         report,
         sensitive_values_for_leak_checks(privacy=privacy),
     )
+
+
+def test_excluded_flag_cannot_bypass_with_forged_observed_coverage() -> None:
+    """Writer excluded=True + forged observed ledger must still BLOCK."""
+    expected = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-1",
+                artifact_version_id="art-1",
+                surface_key="document",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    # Forged ledger claims PROCESSED while the artifact is marked excluded.
+    forged = CoverageLedger(entries=expected.entries)
+    privacy = PrivacyContext(
+        known_sources=(
+            KnownSourceIdentifier(
+                opaque_id="ks-maya",
+                normalized_value="maya@acme.example",
+                kind="email_address",
+            ),
+        ),
+        canaries=(SeededCanary(opaque_id="canary-1", token="CANARY-TOKEN-7f3a"),),
+        allowed_synthetics=frozenset(),
+    )
+    report = validate_release_candidate(
+        candidate=ReleaseCandidate(
+            artifacts=(
+                CandidateArtifact(
+                    artifact_version_id="art-1",
+                    media_type="application/json",
+                    payload=(b'{"owner_email":"maya@acme.example","note":"CANARY-TOKEN-7f3a"}\n'),
+                    excluded=True,
+                ),
+            ),
+            expected_coverage=expected,
+            observed_coverage=forged,
+        ),
+        privacy=privacy,
+        structure=StructureContext(),
+    )
+    assert report.decision is ValidationDecision.BLOCK
+    codes = {finding.code for finding in report.findings}
+    assert CODE_COVERAGE_OBSERVED_TAMPER in codes or CODE_COVERAGE_EXCLUDED_LEAKED in codes
+    assert CODE_COVERAGE_EXCLUDED_LEAKED in codes
+    assert CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE in codes or CODE_PRIVACY_CANARY_DETECTED in codes
+    assert_report_has_no_sensitive_leak(
+        report,
+        sensitive_values_for_leak_checks(privacy=privacy),
+    )
+
+
+def test_json_unicode_escape_residual_detected_via_surface_scan() -> None:
+    """Residuals escaped as \\uXXXX in JSON bytes must still BLOCK."""
+    coverage = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-json-esc",
+                artifact_version_id="art-json-esc",
+                surface_key="document",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    # ensure_ascii-style serialization of josé@acme.example
+    payload = b'{"reporter":"jos\\u00e9@acme.example"}\n'
+    privacy = PrivacyContext(
+        known_sources=(
+            KnownSourceIdentifier(
+                opaque_id="ks-jose",
+                normalized_value="josé@acme.example",
+                kind="email_address",
+            ),
+        ),
+        allowed_synthetics=frozenset(),
+    )
+    report = validate_release_candidate(
+        candidate=ReleaseCandidate(
+            artifacts=(
+                CandidateArtifact(
+                    artifact_version_id="art-json-esc",
+                    media_type="application/json",
+                    payload=payload,
+                ),
+            ),
+            expected_coverage=coverage,
+        ),
+        privacy=privacy,
+        structure=StructureContext(),
+    )
+    assert report.decision is ValidationDecision.BLOCK
+    assert CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE in {finding.code for finding in report.findings}
+    assert_report_has_no_sensitive_leak(
+        report,
+        sensitive_values_for_leak_checks(privacy=privacy),
+    )
+
+
+def test_unsupported_known_source_kind_fails_closed() -> None:
+    coverage = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-ok",
+                artifact_version_id="art-ok",
+                surface_key="document",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    privacy = PrivacyContext(
+        known_sources=(
+            KnownSourceIdentifier(
+                opaque_id="ks-phone",
+                normalized_value="+1-555-0100",
+                kind="phone_number",
+            ),
+        ),
+        allowed_synthetics=frozenset(),
+    )
+    report = validate_release_candidate(
+        candidate=ReleaseCandidate(
+            artifacts=(
+                CandidateArtifact(
+                    artifact_version_id="art-ok",
+                    media_type="application/json",
+                    payload=b'{"status":"ok"}\n',
+                ),
+            ),
+            expected_coverage=coverage,
+        ),
+        privacy=privacy,
+        structure=StructureContext(),
+    )
+    assert report.decision is ValidationDecision.BLOCK
+    assert CODE_PRIVACY_UNSUPPORTED_KIND in {finding.code for finding in report.findings}

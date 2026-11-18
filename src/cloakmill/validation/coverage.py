@@ -9,6 +9,7 @@ from cloakmill.domain.enums import CoverageState
 from cloakmill.validation.findings import (
     CODE_COVERAGE_EXCLUDED_LEAKED,
     CODE_COVERAGE_GAP,
+    CODE_COVERAGE_OBSERVED_TAMPER,
     CODE_COVERAGE_STATE_MISMATCH,
     Finding,
     GateKind,
@@ -59,6 +60,19 @@ def compare_coverage(
     candidates = {
         artifact.artifact_version_id: artifact for artifact in (candidate_artifacts or ())
     }
+
+    # Excluded candidates must carry empty payloads regardless of expected state.
+    for artifact in candidates.values():
+        if artifact.excluded and artifact.payload:
+            subject = subject_ref_for(artifact_version_id=artifact.artifact_version_id)
+            findings.append(
+                _finding(
+                    code=CODE_COVERAGE_EXCLUDED_LEAKED,
+                    subject=subject,
+                    artifact_version_id=artifact.artifact_version_id,
+                    detail_seed=f"excluded-payload:{artifact.artifact_version_id}",
+                )
+            )
 
     for expected_entry in expected.entries:
         observed_entry = observed_map.get(expected_entry.opaque_id)
@@ -151,6 +165,59 @@ def observed_ledger_from_candidates(
             )
         )
     return CoverageLedger(entries=tuple(observed))
+
+
+def verify_observed_ledger(
+    *,
+    claimed: CoverageLedger,
+    derived: CoverageLedger,
+) -> tuple[Finding, ...]:
+    """Reject caller-supplied observed ledgers that diverge from candidate truth."""
+    findings: list[Finding] = []
+    claimed_map = claimed.by_opaque_id()
+    derived_map = derived.by_opaque_id()
+    all_ids = sorted(set(claimed_map) | set(derived_map))
+    for opaque_id in all_ids:
+        claimed_entry = claimed_map.get(opaque_id)
+        derived_entry = derived_map.get(opaque_id)
+        if claimed_entry is None or derived_entry is None:
+            artifact_id = (
+                claimed_entry.artifact_version_id
+                if claimed_entry is not None
+                else derived_entry.artifact_version_id  # type: ignore[union-attr]
+            )
+            subject = subject_ref_for(
+                artifact_version_id=artifact_id,
+                surface_key=opaque_id,
+            )
+            findings.append(
+                _finding(
+                    code=CODE_COVERAGE_OBSERVED_TAMPER,
+                    subject=subject,
+                    artifact_version_id=artifact_id,
+                    detail_seed=f"missing:{opaque_id}",
+                )
+            )
+            continue
+        if (
+            claimed_entry.state is not derived_entry.state
+            or claimed_entry.artifact_version_id != derived_entry.artifact_version_id
+            or claimed_entry.surface_key != derived_entry.surface_key
+            or claimed_entry.required != derived_entry.required
+        ):
+            subject = subject_ref_for(
+                artifact_version_id=derived_entry.artifact_version_id,
+                surface_key=derived_entry.surface_key,
+            )
+            findings.append(
+                _finding(
+                    code=CODE_COVERAGE_OBSERVED_TAMPER,
+                    subject=subject,
+                    artifact_version_id=derived_entry.artifact_version_id,
+                    detail_seed=f"diverge:{opaque_id}:{claimed_entry.state.value}:{derived_entry.state.value}",
+                )
+            )
+    return tuple(findings)
 
 
 def _finding(
