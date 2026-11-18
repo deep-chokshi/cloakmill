@@ -92,7 +92,13 @@ test("create, load samples, inspect coverage, navigate and recover from unknown 
     .getByRole("link", { name: "Identity review", exact: true })
     .click();
   await expect(
-    page.getByText("This step is being built.", { exact: true }),
+    page.getByRole("heading", { name: "A name isn't an identity." }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("FICTIONAL SAMPLE", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Authored sample exceptions only", { exact: false }),
   ).toBeVisible();
   await page.goto("/projects/not-a-project/overview");
   await expect(
@@ -261,4 +267,72 @@ test("direct Action replays cannot cross sessions and cross-origin mutations are
   });
   expect(crossOrigin.status()).toBeGreaterThanOrEqual(400);
   await other.close();
+});
+
+test("identity review, freeze, and profile change invalidation stay sample-labeled", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await create(page, "Identity freeze");
+  await page.getByRole("link", { name: "Sources", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Load sample sources", exact: true })
+    .click();
+  await expect(
+    page.getByRole("link", { name: "Team directory.csv", exact: true }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("link", { name: "Identity review", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "A name isn't an identity." }),
+  ).toBeVisible();
+  await expect(page.getByText("Needs review")).toContainText("2");
+  await page
+    .getByRole("button", { name: "Confirm identity", exact: true })
+    .click();
+  await expect(page.getByText("Needs review")).toContainText("1");
+  await page
+    .getByRole("button", { name: "Confirm separate account", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Everyone has their place." }),
+  ).toBeVisible();
+
+  await page
+    .getByRole("link", { name: "Replacement profiles", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "New identities. Same connections." }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Freeze sample mapping", exact: true }),
+  ).toBeDisabled();
+  await page
+    .getByRole("button", {
+      name: "Exclude unavailable PDF from this revision",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "Freeze sample mapping", exact: true })
+    .click();
+  await expect(page.getByText(/FROZEN · r/)).toBeVisible();
+  await expect(page.getByText(/sample-map-r/)).toBeVisible();
+  await expect(page.getByText(/not a privacy guarantee/i)).toBeVisible();
+
+  await page
+    .locator("#profile-select")
+    .selectOption({ label: "Cedar / sample profile B" });
+  await expect(
+    page.getByText("FICTIONAL SAMPLE", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Freeze sample mapping", exact: true }),
+  ).toBeEnabled();
+  await expect(page.getByText("Julia West")).toBeVisible();
+  expect(await page.content()).not.toMatch(
+    /vault:\/\/|privateLocator|anonymized|privacy guaranteed/i,
+  );
 });

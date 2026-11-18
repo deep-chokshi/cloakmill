@@ -1,20 +1,54 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { IdentityReview } from "@/components/identity-review";
 import { LoadSamples } from "@/components/project-form";
+import { ProfilesPanel } from "@/components/profiles-panel";
 import { stages } from "@/lib/contracts";
-import { readProject, readSources } from "@/server/workspace";
+import { readMapping, readProject, readSources } from "@/server/workspace";
 
 export default async function ProjectPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string; section: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { projectId, section } = await params;
+  const query = await searchParams;
   const stage = stages.find((item) => item.id === section);
   const project = await readProject(projectId);
   if (!project || !stage) notFound();
   const sources = await readSources(projectId);
   const covered = sources.filter((source) => source.coverage === "sample");
+
+  if (section === "identities" || section === "profiles") {
+    const mapping = await readMapping(projectId);
+    if (!mapping) notFound();
+    if (section === "identities") {
+      const tab = query.tab === "all" ? "all" : "review";
+      const selectedId =
+        typeof (tab === "all" ? query.entity : query.case) === "string"
+          ? ((tab === "all" ? query.entity : query.case) as string)
+          : undefined;
+      return (
+        <IdentityReview
+          projectId={projectId}
+          projectName={project.name}
+          mapping={mapping}
+          tab={tab}
+          selectedId={selectedId}
+        />
+      );
+    }
+    return (
+      <ProfilesPanel
+        projectId={projectId}
+        projectName={project.name}
+        mapping={mapping}
+      />
+    );
+  }
+
   if (section === "overview")
     return (
       <>
@@ -61,21 +95,25 @@ export default async function ProjectPage({
             <p className="eyebrow">Your next step</p>
             <h2>
               {sources.length
-                ? "Understand what is in scope."
+                ? "Review identities and freeze profiles."
                 : "No sources yet"}
             </h2>
             <p>
               {sources.length
-                ? "Inspect each source and its limitations. Sample metadata does not establish connector support."
+                ? "Inspect coverage, resolve authored sample exceptions, then freeze a fictional mapping revision."
                 : "Start with fictional sources to explore the inventory. Real file ingestion comes in a later step."}
             </p>
           </div>
           <Link
             className="button primary"
-            href={`/projects/${projectId}/sources`}
+            href={
+              sources.length
+                ? `/projects/${projectId}/identities`
+                : `/projects/${projectId}/sources`
+            }
             prefetch={false}
           >
-            {sources.length ? "Review source inventory" : "Add sample sources"}{" "}
+            {sources.length ? "Open identity review" : "Add sample sources"}{" "}
             <span aria-hidden="true">↗</span>
           </Link>
         </section>
@@ -92,12 +130,12 @@ export default async function ProjectPage({
               "Verify a release",
             ].map((title, i) => (
               <div key={title}>
-                <span className={i === 0 ? "step active-step" : "step"}>
+                <span className={i <= 2 ? "step active-step" : "step"}>
                   {i + 1}
                 </span>
                 <h3>{title}</h3>
                 <p>
-                  {i === 0
+                  {i <= 2
                     ? "Available with samples"
                     : "Coming in a later increment"}
                 </p>
@@ -212,16 +250,17 @@ export default async function ProjectPage({
         </span>
         <h2>This step is being built.</h2>
         <p>
-          The approved design includes this stage. This first increment
-          implements projects and source inventory; no scan, approval,
-          validation or release has run.
+          The approved design includes this stage. Identity review and
+          replacement profiles are available with authored samples; preview,
+          validation, and releases land in a later increment. No privacy engine
+          has run.
         </p>
         <Link
           className="button secondary"
-          href={`/projects/${projectId}/sources`}
+          href={`/projects/${projectId}/profiles`}
           prefetch={false}
         >
-          Return to sources <span aria-hidden="true">↗</span>
+          Return to profiles <span aria-hidden="true">↗</span>
         </Link>
       </section>
     </>

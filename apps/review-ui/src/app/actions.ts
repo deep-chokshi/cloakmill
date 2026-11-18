@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { ActionResult } from "@/lib/contracts";
+import type { MappingMutation } from "@/lib/identity-model";
 import { parseProjectName, WorkspaceError } from "@/lib/workspace-store";
-import { createProject, loadSamples } from "@/server/workspace";
+import { createProject, loadSamples, mutateMapping } from "@/server/workspace";
 
 function safeError(error: unknown): ActionResult {
   return {
@@ -13,6 +14,12 @@ function safeError(error: unknown): ActionResult {
         ? error.message
         : "The request could not be completed. Please try again.",
   };
+}
+
+function assertProjectId(projectId: unknown): string {
+  if (typeof projectId !== "string" || projectId.length > 64)
+    throw new WorkspaceError("This project is unavailable.");
+  return projectId;
 }
 
 export async function createProjectAction(
@@ -47,12 +54,82 @@ export async function loadSamplesAction(
   _state: ActionResult,
 ): Promise<ActionResult> {
   try {
-    if (typeof projectId !== "string" || projectId.length > 64)
-      throw new WorkspaceError("This project is unavailable.");
-    await loadSamples(projectId);
+    await loadSamples(assertProjectId(projectId));
   } catch (error) {
     return safeError(error);
   }
   revalidatePath("/", "layout");
   return {};
+}
+
+async function mappingAction(
+  projectId: string,
+  mutation: MappingMutation,
+): Promise<ActionResult> {
+  try {
+    await mutateMapping(assertProjectId(projectId), mutation);
+  } catch (error) {
+    return safeError(error);
+  }
+  revalidatePath("/", "layout");
+  return {};
+}
+
+export async function decideIdentityAction(
+  projectId: string,
+  _state: ActionResult,
+  data: FormData,
+): Promise<ActionResult> {
+  const caseId = data.get("caseId");
+  const value = data.get("value");
+  if (
+    typeof caseId !== "string" ||
+    caseId.length > 64 ||
+    typeof value !== "string" ||
+    value.length > 64
+  ) {
+    return { error: "That identity choice is not available." };
+  }
+  return mappingAction(projectId, { type: "DECIDE", caseId, value });
+}
+
+export async function reopenIdentityAction(
+  projectId: string,
+  caseId: string,
+  _state: ActionResult,
+): Promise<ActionResult> {
+  if (typeof caseId !== "string" || caseId.length > 64) {
+    return { error: "That identity decision could not be reopened." };
+  }
+  return mappingAction(projectId, { type: "REOPEN", caseId });
+}
+
+export async function setProfileAction(
+  projectId: string,
+  _state: ActionResult,
+  data: FormData,
+): Promise<ActionResult> {
+  const profileId = data.get("profileId");
+  if (typeof profileId !== "string" || profileId.length > 64) {
+    return { error: "That sample profile preset is not available." };
+  }
+  return mappingAction(projectId, { type: "SET_PROFILE", profileId });
+}
+
+export async function excludeUnsupportedAction(
+  projectId: string,
+  value: boolean,
+  _state: ActionResult,
+): Promise<ActionResult> {
+  return mappingAction(projectId, {
+    type: "EXCLUDE_UNSUPPORTED",
+    value: Boolean(value),
+  });
+}
+
+export async function freezeMappingAction(
+  projectId: string,
+  _state: ActionResult,
+): Promise<ActionResult> {
+  return mappingAction(projectId, { type: "FREEZE" });
 }

@@ -1,8 +1,9 @@
 # CloakMill review workspace
 
-Step 2A of the application frontend: Next.js App Router, TypeScript, local fonts,
-project creation, source inventory and coverage details. All records are fictional.
-The remaining workflow screens are explicit planned states.
+Step 2 frontend for the review workspace: Next.js App Router, TypeScript, local
+fonts, project creation, source inventory, identity review, replacement profiles,
+and sample mapping freeze/invalidation. All records are fictional. Preview,
+validation, and releases remain explicit planned states.
 
 ## Run locally
 
