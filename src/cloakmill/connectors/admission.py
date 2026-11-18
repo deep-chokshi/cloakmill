@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import mimetypes
 from dataclasses import dataclass
 from enum import StrEnum
@@ -25,6 +26,7 @@ class AdmissionReason(StrEnum):
     SYMLINK_ESCAPE = "symlink_escape"
     SYMLINK_CYCLE = "symlink_cycle"
     DIRECTORY_SYMLINK = "directory_symlink"
+    FILE_SYMLINK = "file_symlink"
     PATH_TRAVERSAL = "path_traversal"
     MAX_DEPTH_EXCEEDED = "max_depth_exceeded"
     OVERSIZED = "oversized"
@@ -108,7 +110,16 @@ def sha256_digest(payload: bytes) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
-def opaque_id_for_relative_path(prefix: str, relative_path: str) -> str:
-    """Deterministic opaque id from a relative package path (not absolute)."""
-    digest = hashlib.sha256(relative_path.encode("utf-8")).hexdigest()[:24]
+def opaque_id_for_relative_path(
+    prefix: str,
+    relative_path: str,
+    *,
+    key: bytes,
+) -> str:
+    """Deterministic per-job opaque id (HMAC) that is not offline-invertible.
+
+    ``key`` must be process/job-local and never exported in release-facing
+    structures. Without a secret, path→id recovery is trivial.
+    """
+    digest = hmac.new(key, relative_path.encode("utf-8"), hashlib.sha256).hexdigest()[:24]
     return f"{prefix}-{digest}"

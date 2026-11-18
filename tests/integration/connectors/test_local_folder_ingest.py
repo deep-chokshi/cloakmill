@@ -113,7 +113,8 @@ def test_symlink_escape_is_quarantined(tmp_path: Path) -> None:
     assert by_path["escape.txt"].coverage_state is CoverageState.FAILED
 
 
-def test_symlink_inside_root_is_admitted(tmp_path: Path) -> None:
+def test_symlink_inside_root_is_quarantined(tmp_path: Path) -> None:
+    """File symlinks are refused to close TOCTOU between resolve and read."""
     root = tmp_path / "pkg"
     root.mkdir()
     target = root / "nested" / "target.txt"
@@ -122,7 +123,8 @@ def test_symlink_inside_root_is_admitted(tmp_path: Path) -> None:
 
     scan = scan_local_folder(root)
     by_path = {entry.relative_package_path: entry for entry in scan.inventory}
-    assert by_path["alias.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert by_path["alias.txt"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["alias.txt"].reason is AdmissionReason.FILE_SYMLINK
     assert by_path["nested/target.txt"].disposition is AdmissionDisposition.ADMITTED
 
 
@@ -451,3 +453,47 @@ def test_non_utf8_text_is_parse_failed(tmp_path: Path) -> None:
     assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
     assert all(artifact.media_type == "text/plain" for artifact in result.artifacts)
     assert len(result.artifacts) == 1
+
+
+def test_hard_link_to_excluded_file_is_excluded(tmp_path: Path) -> None:
+    """Hard links outside an exclusion prefix must not admit the scoped-out inode."""
+    root = tmp_path / "pkg"
+    excluded = root / "secrets" / "token.txt"
+    _write(excluded, "not-a-real-secret\n")
+    root.mkdir(exist_ok=True)
+    alias = root / "alias.txt"
+    alias.hardlink_to(excluded)
+    _write(root / "ok.txt", "fine\n")
+
+    result = ingest_local_folder(
+        root,
+        access_scope="project:syn-demo",
+        exclusions=("secrets/**",),
+    )
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["secrets"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["alias.txt"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["alias.txt"].reason is AdmissionReason.EXPLICIT_EXCLUSION
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert result.admitted_payloads and all(
+        payload.relative_package_path == "ok.txt" for payload in result.admitted_payloads
+    )
+    assert all(artifact.media_type == "text/plain" for artifact in result.artifacts)
+    assert len(result.artifacts) == 1
+
+
+def test_opaque_ids_are_hmac_keyed_per_scan(tmp_path: Path) -> None:
+    """Opaque ids must not be offline-invertible path hashes."""
+    root = tmp_path / "pkg"
+    _write(root / "one.txt", "a\n")
+
+    first = scan_local_folder(root)
+    second = scan_local_folder(root)
+    first_id = first.inventory[0].opaque_id
+    second_id = second.inventory[0].opaque_id
+    assert first_id.startswith("art-")
+    assert second_id.startswith("art-")
+    # Fresh job key per scan → same relative path yields different opaque ids.
+    assert first_id != second_id
+    # Within one scan the id is stable for the admitted payload pairing.
+    assert first.admitted[0].opaque_id == first_id

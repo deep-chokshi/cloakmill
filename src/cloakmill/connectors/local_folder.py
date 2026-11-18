@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import secrets
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -83,12 +84,13 @@ def _entry(
     relative_package_path: str,
     disposition: AdmissionDisposition,
     reason: AdmissionReason,
+    id_key: bytes,
     media_type: str | None = None,
     byte_size: int | None = None,
     digest: str | None = None,
 ) -> InventoryEntry:
     return InventoryEntry(
-        opaque_id=opaque_id_for_relative_path("art", relative_package_path),
+        opaque_id=opaque_id_for_relative_path("art", relative_package_path, key=id_key),
         relative_package_path=relative_package_path,
         disposition=disposition,
         reason=reason,
@@ -107,12 +109,83 @@ def _is_under_root(path: Path, root: Path) -> bool:
         return False
 
 
-def _dir_identity(path: Path) -> tuple[int, int] | None:
+def _inode_identity(path: Path, *, follow_symlinks: bool = False) -> tuple[int, int] | None:
+    """Return ``(st_dev, st_ino)`` for hard-link / cycle tracking."""
     try:
-        stat = path.stat()
+        stat = path.stat() if follow_symlinks else path.lstat()
     except OSError:
         return None
     return (stat.st_dev, stat.st_ino)
+
+
+def _dir_identity(path: Path) -> tuple[int, int] | None:
+    return _inode_identity(path, follow_symlinks=True)
+
+
+def _collect_excluded_inodes(
+    root_path: Path,
+    exclusion_patterns: Sequence[str],
+) -> set[tuple[int, int]]:
+    """Walk the tree and record inodes for every excluded path and descendant.
+
+    Hard links outside an exclusion prefix share ``(st_dev, st_ino)`` with the
+    scoped-out file; collecting those identities closes the bypass.
+    """
+    if not exclusion_patterns:
+        return set()
+
+    excluded: set[tuple[int, int]] = set()
+    visited_dirs: set[tuple[int, int]] = set()
+
+    def record(path: Path) -> None:
+        identity = _inode_identity(path, follow_symlinks=False)
+        if identity is not None:
+            excluded.add(identity)
+        # Also record the followed target so hard links to symlink targets match.
+        if path.is_symlink():
+            followed = _inode_identity(path, follow_symlinks=True)
+            if followed is not None:
+                excluded.add(followed)
+
+    def walk(directory: Path, *, under_exclusion: bool) -> None:
+        dir_id = _inode_identity(directory, follow_symlinks=False)
+        if dir_id is None:
+            return
+        if dir_id in visited_dirs:
+            return
+        visited_dirs.add(dir_id)
+
+        try:
+            children = sorted(directory.iterdir(), key=lambda item: item.name)
+        except OSError:
+            return
+
+        for child in children:
+            try:
+                raw_relative = child.relative_to(root_path).as_posix()
+            except ValueError:
+                continue
+            if "\\" in raw_relative:
+                continue
+            try:
+                relative = normalize_relative_package_path(raw_relative)
+            except ValueError:
+                continue
+
+            matched = under_exclusion or _matches_exclusion(relative, exclusion_patterns)
+            if matched:
+                record(child)
+                if child.is_symlink():
+                    continue
+                if child.is_dir():
+                    walk(child, under_exclusion=True)
+                continue
+
+            if child.is_dir() and not child.is_symlink():
+                walk(child, under_exclusion=False)
+
+    walk(root_path, under_exclusion=False)
+    return excluded
 
 
 def scan_local_folder(
@@ -137,6 +210,9 @@ def scan_local_folder(
     inventory: list[InventoryEntry] = []
     admitted: list[AdmittedPayload] = []
     visited_dirs: set[tuple[int, int]] = set()
+    excluded_inodes = _collect_excluded_inodes(root_path, exclusion_patterns)
+    # Process-local HMAC key for opaque ids; never exported release-facing.
+    id_key = secrets.token_bytes(32)
 
     def visit(directory: Path, depth: int) -> None:
         identity = _dir_identity(directory)
@@ -148,6 +224,7 @@ def scan_local_folder(
                         relative_package_path=rel,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.UNREADABLE,
+                        id_key=id_key,
                     )
                 )
             return
@@ -159,6 +236,7 @@ def scan_local_folder(
                         relative_package_path=rel,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.SYMLINK_CYCLE,
+                        id_key=id_key,
                     )
                 )
             return
@@ -174,6 +252,7 @@ def scan_local_folder(
                         relative_package_path=rel,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.UNREADABLE,
+                        id_key=id_key,
                     )
                 )
             return
@@ -187,6 +266,7 @@ def scan_local_folder(
                         relative_package_path=encode_unsafe_relative_path(child.name),
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.PATH_TRAVERSAL,
+                        id_key=id_key,
                     )
                 )
                 continue
@@ -200,6 +280,7 @@ def scan_local_folder(
                         relative_package_path=encode_unsafe_relative_path(raw_relative),
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.PATH_TRAVERSAL,
+                        id_key=id_key,
                     )
                 )
                 continue
@@ -212,16 +293,21 @@ def scan_local_folder(
                         relative_package_path=encode_unsafe_relative_path(raw_relative),
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.PATH_TRAVERSAL,
+                        id_key=id_key,
                     )
                 )
                 continue
 
             if _matches_exclusion(relative, exclusion_patterns):
+                identity = _inode_identity(child, follow_symlinks=False)
+                if identity is not None:
+                    excluded_inodes.add(identity)
                 inventory.append(
                     _entry(
                         relative_package_path=relative,
                         disposition=AdmissionDisposition.EXCLUDED,
                         reason=AdmissionReason.EXPLICIT_EXCLUSION,
+                        id_key=id_key,
                     )
                 )
                 continue
@@ -232,6 +318,7 @@ def scan_local_folder(
                         relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.MAX_DEPTH_EXCEEDED,
+                        id_key=id_key,
                     )
                 )
                 continue
@@ -246,6 +333,7 @@ def scan_local_folder(
                             relative_package_path=relative,
                             disposition=AdmissionDisposition.QUARANTINED,
                             reason=AdmissionReason.SYMLINK_CYCLE,
+                            id_key=id_key,
                         )
                     )
                     continue
@@ -255,6 +343,7 @@ def scan_local_folder(
                             relative_package_path=relative,
                             disposition=AdmissionDisposition.QUARANTINED,
                             reason=AdmissionReason.SYMLINK_ESCAPE,
+                            id_key=id_key,
                         )
                     )
                     continue
@@ -266,6 +355,7 @@ def scan_local_folder(
                             relative_package_path=relative,
                             disposition=AdmissionDisposition.QUARANTINED,
                             reason=AdmissionReason.SYMLINK_ESCAPE,
+                            id_key=id_key,
                         )
                     )
                     continue
@@ -278,29 +368,38 @@ def scan_local_folder(
                                 relative_package_path=relative,
                                 disposition=AdmissionDisposition.QUARANTINED,
                                 reason=AdmissionReason.SYMLINK_ESCAPE,
+                                id_key=id_key,
                             )
                         )
                         continue
                     if _matches_exclusion(target_relative, exclusion_patterns):
+                        target_identity = _inode_identity(resolved_target, follow_symlinks=False)
+                        if target_identity is not None:
+                            excluded_inodes.add(target_identity)
                         inventory.append(
                             _entry(
                                 relative_package_path=relative,
                                 disposition=AdmissionDisposition.EXCLUDED,
                                 reason=AdmissionReason.EXPLICIT_EXCLUSION,
+                                id_key=id_key,
                             )
                         )
                         continue
-                # Never descend through directory symlinks: alias paths would bypass
-                # exclusions written against the real package path.
-                if resolved_target.is_dir():
-                    inventory.append(
-                        _entry(
-                            relative_package_path=relative,
-                            disposition=AdmissionDisposition.QUARANTINED,
-                            reason=AdmissionReason.DIRECTORY_SYMLINK,
-                        )
+                # Never follow symlinks for admission: closes alias exclusion
+                # bypass and TOCTOU races between resolve and read.
+                inventory.append(
+                    _entry(
+                        relative_package_path=relative,
+                        disposition=AdmissionDisposition.QUARANTINED,
+                        reason=(
+                            AdmissionReason.DIRECTORY_SYMLINK
+                            if resolved_target.is_dir()
+                            else AdmissionReason.FILE_SYMLINK
+                        ),
+                        id_key=id_key,
                     )
-                    continue
+                )
+                continue
 
             if child.is_dir():
                 visit(child, depth + 1)
@@ -312,6 +411,19 @@ def scan_local_folder(
                         relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.NOT_A_FILE,
+                        id_key=id_key,
+                    )
+                )
+                continue
+
+            file_identity = _inode_identity(child, follow_symlinks=False)
+            if file_identity is not None and file_identity in excluded_inodes:
+                inventory.append(
+                    _entry(
+                        relative_package_path=relative,
+                        disposition=AdmissionDisposition.EXCLUDED,
+                        reason=AdmissionReason.EXPLICIT_EXCLUSION,
+                        id_key=id_key,
                     )
                 )
                 continue
@@ -322,6 +434,7 @@ def scan_local_folder(
                         relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.UNSUPPORTED_TYPE,
+                        id_key=id_key,
                         media_type=media_type_for_relative_path(relative),
                     )
                 )
@@ -335,6 +448,7 @@ def scan_local_folder(
                         relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.UNREADABLE,
+                        id_key=id_key,
                     )
                 )
                 continue
@@ -345,6 +459,7 @@ def scan_local_folder(
                         relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.OVERSIZED,
+                        id_key=id_key,
                         media_type=media_type_for_relative_path(relative),
                         byte_size=size,
                     )
@@ -359,6 +474,7 @@ def scan_local_folder(
                         relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.UNREADABLE,
+                        id_key=id_key,
                         media_type=media_type_for_relative_path(relative),
                         byte_size=size,
                     )
@@ -371,6 +487,7 @@ def scan_local_folder(
                 relative_package_path=relative,
                 disposition=AdmissionDisposition.ADMITTED,
                 reason=AdmissionReason.OK,
+                id_key=id_key,
                 media_type=media_type,
                 byte_size=len(payload),
                 digest=digest,
