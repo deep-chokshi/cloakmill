@@ -63,3 +63,9 @@ held-out fixture paths.
 
 Do not commit source→synthetic mapping vaults, real PII, or customer-derived
 reproductions alongside these corpora.
+
+Claude Security Review excludes `examples/synthetic/corpora` and
+`tests/fixtures/eval` (`exclude-directories` in
+`.github/workflows/claude-security-review.yml`) so large fixture blobs do not
+overflow the scan prompt. Generator and harness code under `scripts/` and
+`tests/unit/` remain in scope.

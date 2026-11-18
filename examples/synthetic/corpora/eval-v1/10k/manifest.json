@@ -12,7 +12,7 @@
   "person_count": 120,
   "raw_files": {
     "raw/contacts.csv": "7941eb21a88006c553f60a2db7c874b0b0ecc653f735e1c7843ff0a449cb6adb",
-    "raw/messages.json": "d367f5d09035c3186d98a82f819d70129807605f98c3f5b568e8d07a2df8a868",
+    "raw/messages.json": "8e9373720d901d347b3ae3b9df9c42c2080adee56575c1a61adb5ea11cb2d4f1",
     "raw/notes.txt": "ac657113202d047391f57e09f18649b155496ae0f1f9490f83f362f3775ba58e"
   },
   "record_count_target": 10000,

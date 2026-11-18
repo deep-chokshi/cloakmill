@@ -10,7 +10,13 @@ from pathlib import Path
 import pytest
 
 from scripts.synthetic_corpus.constants import RESERVED_EMAIL_DOMAINS, SIZES
-from scripts.synthetic_corpus.generate import CorpusSpec, generate_corpus, write_corpus
+from scripts.synthetic_corpus.generate import (
+    CorpusSpec,
+    _period_covering,
+    generate_corpus,
+    write_corpus,
+)
+from scripts.synthetic_corpus.roster import build_roster
 from scripts.synthetic_corpus.schema import validate_identity_link, validate_observation
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -160,3 +166,80 @@ def test_write_corpus_round_trip(tmp_path: Path) -> None:
     assert (fixtures_root / "ENGINE_INACCESSIBLE").is_file()
     again = generate_corpus(spec)
     assert again["digest_doc"] == written["digest_doc"]
+
+
+def test_message_cross_mentions_are_distinct_people() -> None:
+    """Author/mention collisions must not collapse two email spans onto one offset."""
+    generated = generate_corpus(CorpusSpec.for_size("1k"))
+    messages = json.loads(generated["raw_files"]["raw/messages.json"])["messages"]
+    body_obs = [
+        o
+        for o in generated["observations"]
+        if o["artifact"]["opaque_id"] == "messages_json"
+        and o["part"]["surface_kind"] == "plain_text"
+    ]
+    by_part: dict[str, list[dict]] = {}
+    for obs in body_obs:
+        by_part.setdefault(obs["part"]["part_id"], []).append(obs)
+
+    for message in messages:
+        index = int(message["message_id"].split("-")[1])
+        part_id = f"part_messages_json_{index:06d}"
+        body = message["body"]
+        author_email = message["author_email"]
+        # Mention email is inside angle brackets after "Also loop in ".
+        mention_email = body.split("<", 1)[1].split(">", 1)[0]
+        assert mention_email != author_email
+
+        relevant = [
+            o
+            for o in by_part[part_id]
+            if o["entity_type"] == "email_address"
+            and o["evidence_text"] in {author_email, mention_email}
+        ]
+        spans = {
+            (o["evidence_locator"]["start"], o["evidence_locator"]["end"], o["evidence_text"])
+            for o in relevant
+        }
+        author_start = body.index(author_email)
+        author_span = (author_start, author_start + len(author_email), author_email)
+        assert author_span in spans
+        mention_start = body.index(mention_email, body.index("Also loop in "))
+        mention_span = (mention_start, mention_start + len(mention_email), mention_email)
+        assert mention_span in spans
+        email_offsets = [
+            (o["evidence_locator"]["start"], o["evidence_locator"]["end"]) for o in relevant
+        ]
+        assert len(email_offsets) == len(set(email_offsets))
+
+
+def test_ownership_period_matches_as_of_in_message_body() -> None:
+    roster = build_roster(person_count=48, seed_label="eval-v1-1k")
+    assert _period_covering("2022-01-18", roster.ownership_periods).tags == (
+        "ownership_change",
+        "prior_owner",
+    )
+    assert _period_covering("2023-08-02", roster.ownership_periods).tags == (
+        "ownership_change",
+        "current_owner",
+    )
+
+    generated = generate_corpus(CorpusSpec.for_size("1k"))
+    messages = json.loads(generated["raw_files"]["raw/messages.json"])["messages"]
+    ownership_obs = [
+        o
+        for o in generated["observations"]
+        if "ownership_change" in o.get("case_tags", [])
+        and o["artifact"]["opaque_id"] == "messages_json"
+        and o["entity_type"] == "email_address"
+    ]
+    assert ownership_obs
+    mailbox = roster.ownership_periods[0].mailbox
+    for obs in ownership_obs:
+        index = int(obs["part"]["part_id"].rsplit("_", 1)[-1])
+        message = messages[index]
+        assert mailbox in message["body"]
+        assert f"(as of {message['sent_at']})" in message["body"]
+        expected = _period_covering(message["sent_at"], roster.ownership_periods)
+        assert obs["underlying_entity_ref"] == expected.owner_entity_id
+        assert set(expected.tags) <= set(obs["case_tags"])

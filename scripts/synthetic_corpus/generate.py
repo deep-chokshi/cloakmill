@@ -20,7 +20,7 @@ from .constants import (
     RESERVED_EMAIL_DOMAINS,
     SIZES,
 )
-from .roster import Person, Roster, build_roster
+from .roster import OwnershipPeriod, Person, Roster, build_roster
 from .schema import (
     SCHEMA_VERSION,
     field_path_locator,
@@ -94,6 +94,38 @@ def _sha256_text(text: str) -> str:
 
 def _person_full_name(person: Person) -> str:
     return f"{person.first_name} {person.last_name}"
+
+
+def _period_covering(as_of: str, periods: tuple[OwnershipPeriod, ...]) -> OwnershipPeriod:
+    """Return the ownership period whose inclusive date range contains ``as_of``."""
+    for period in periods:
+        if period.valid_from <= as_of and (period.valid_to is None or as_of <= period.valid_to):
+            return period
+    msg = f"no ownership period covers as_of={as_of!r}"
+    raise ValueError(msg)
+
+
+def _distinct_mention(author: Person, people: tuple[Person, ...], index: int) -> Person:
+    """Pick a cross-mention person that is never the author (avoids collapsed spans)."""
+    mention = people[(index * 5) % len(people)]
+    if mention.entity_id == author.entity_id:
+        mention = people[(index * 5 + 1) % len(people)]
+    if index % 11 == 0:
+        same_first = [p for p in people[:12] if p.first_name == author.first_name]
+        if len(same_first) >= 2:
+            mention = same_first[(index // 11) % len(same_first)]
+            if mention.entity_id == author.entity_id:
+                mention = same_first[(index // 11 + 1) % len(same_first)]
+    if mention.entity_id == author.entity_id:
+        msg = f"failed to select distinct mention for author {author.entity_id}"
+        raise RuntimeError(msg)
+    return mention
+
+
+def _span_in_region(haystack: str, needle: str, *, region_start: int) -> tuple[int, int]:
+    """Locate ``needle`` at or after ``region_start`` (codepoint offsets)."""
+    local = haystack.index(needle, region_start)
+    return local, local + len(needle)
 
 
 def _assert_reserved_domains(text: str) -> None:
@@ -256,14 +288,7 @@ def _generate_messages(state: _GenerationState) -> str:
 
     for index in range(target):
         author = people[index % len(people)]
-        # Ambiguity: periodically use another person who shares the first name.
-        mention = people[(index * 5) % len(people)]
-        if index % 11 == 0:
-            same_first = [p for p in people[:12] if p.first_name == author.first_name]
-            if len(same_first) >= 2:
-                mention = same_first[(index // 11) % len(same_first)]
-                if mention.entity_id == author.entity_id:
-                    mention = same_first[(index // 11 + 1) % len(same_first)]
+        mention = _distinct_mention(author, people, index)
 
         as_of = (date(2022, 1, 1) + timedelta(days=index % 900)).isoformat()
         body = (
@@ -271,8 +296,9 @@ def _generate_messages(state: _GenerationState) -> str:
             f"AC-{(1000 + (index % 50)):d}. Also loop in {mention.first_name} "
             f"{mention.last_name} <{mention.email}>."
         )
+        period: OwnershipPeriod | None = None
         if index % 17 == 0:
-            period = state.roster.ownership_periods[index % 2]
+            period = _period_covering(as_of, state.roster.ownership_periods)
             body += f" Ops desk address in effect: {period.mailbox} (as of {as_of})."
 
         if index % 23 == 0:
@@ -310,15 +336,28 @@ def _generate_messages(state: _GenerationState) -> str:
                 )
             )
 
-        # Body is plain text; record codepoint offsets for key spans.
-        body_tags: tuple[str, ...]
+        # Author email appears first; mention spans are searched after "Also loop in ".
+        mention_region = body.index("Also loop in ")
+        author_start = body.index(author.email)
+        author_end = author_start + len(author.email)
+        state.track(
+            make_observation(
+                observation_id=state.observation_id(),
+                artifact_opaque_id=artifact,
+                source_version=state.spec.source_version,
+                relative_path=relative,
+                part_id=state.part_id(artifact, index),
+                surface_kind="plain_text",
+                coverage_state="complete",
+                entity_type="email_address",
+                evidence_locator=text_offset_locator(start=author_start, end=author_end),
+                evidence_text=author.email,
+                underlying_entity_ref=author.entity_id,
+                case_tags=(*author.tags, "in_body"),
+                recognizer_version=GENERATOR_VERSION,
+            )
+        )
         for evidence_text, entity_type, entity_ref, body_tags in (
-            (
-                author.email,
-                "email_address",
-                author.entity_id,
-                (*author.tags, "in_body"),
-            ),
             (
                 _person_full_name(mention),
                 "person_name",
@@ -332,8 +371,7 @@ def _generate_messages(state: _GenerationState) -> str:
                 (*mention.tags, "in_body", "cross_mention"),
             ),
         ):
-            start = body.index(evidence_text)
-            end = start + len(evidence_text)
+            start, end = _span_in_region(body, evidence_text, region_start=mention_region)
             state.track(
                 make_observation(
                     observation_id=state.observation_id(),
@@ -352,8 +390,7 @@ def _generate_messages(state: _GenerationState) -> str:
                 )
             )
 
-        if index % 17 == 0:
-            period = state.roster.ownership_periods[index % 2]
+        if period is not None:
             start = body.index(period.mailbox)
             end = start + len(period.mailbox)
             state.track(
