@@ -43,6 +43,7 @@ class PartDiscoveryResult:
     conflicts: tuple[ObservationConflict, ...]
     skipped: bool
     skip_reason: str | None = None
+    requires_exception_review: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +63,10 @@ class DiscoveryResult:
     @property
     def conflicts(self) -> tuple[ObservationConflict, ...]:
         return tuple(item for part in self.parts for item in part.conflicts)
+
+    @property
+    def requires_exception_review(self) -> bool:
+        return any(part.requires_exception_review for part in self.parts)
 
 
 class DiscoveryEngine:
@@ -113,6 +118,7 @@ class DiscoveryEngine:
                 conflicts=(),
                 skipped=True,
                 skip_reason=f"coverage_state={part.coverage_state.value}",
+                requires_exception_review=False,
             )
 
         recognizers = self._catalog.select(
@@ -139,6 +145,7 @@ class DiscoveryEngine:
             rejected=validation.rejected,
             conflicts=validation.conflicts,
             skipped=False,
+            requires_exception_review=validation.requires_exception_review,
         )
 
 

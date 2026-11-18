@@ -41,6 +41,7 @@ class ObservationConflict:
     left: CandidateObservation
     right: CandidateObservation
     reason: str
+    leaves_uncovered_evidence: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,16 +49,19 @@ class ValidationResult:
     accepted: tuple[Observation, ...]
     rejected: tuple[RejectedCandidate, ...]
     conflicts: tuple[ObservationConflict, ...]
+    requires_exception_review: bool = False
 
 
 class ObservationValidator:
     """Promote candidates to Observations or reject/conflict them explicitly.
 
-    Overlapping text offsets on the same part are never silently discarded:
-    the earlier deterministic candidate may be accepted; later overlapping
-    candidates are rejected with ``OVERLAP_CONFLICT`` and a conflict record.
-    Exact duplicates (same entity type + locator) collapse to one accepted
-    observation; subsequent copies are rejected as ``DUPLICATE``.
+    Overlapping text offsets on the same part are never silently discarded.
+    Coverage-preserving policy: consider longer spans (then higher scores)
+    first so a nested shorter match cannot preempt a containing sensitive
+    span. Contained overlaps are rejected with ``OVERLAP_CONFLICT``. Partial
+    overlaps that would leave residual uncovered evidence bytes set
+    ``requires_exception_review`` so downstream release cannot treat the
+    part as fully covered.
     """
 
     def validate(
@@ -70,6 +74,7 @@ class ObservationValidator:
         conflicts: list[ObservationConflict] = []
         accepted_keys: set[tuple[str, str]] = set()
         accepted_spans: list[tuple[TextOffsetLocator, CandidateObservation]] = []
+        requires_exception_review = False
 
         ordered = sorted(candidates, key=_candidate_sort_key)
         for candidate in ordered:
@@ -90,6 +95,8 @@ class ObservationValidator:
                 rejected.append(rejection)
                 if conflict is not None:
                     conflicts.append(conflict)
+                    if conflict.leaves_uncovered_evidence:
+                        requires_exception_review = True
                 continue
             rejected.append(outcome)
 
@@ -97,6 +104,7 @@ class ObservationValidator:
             accepted=tuple(accepted),
             rejected=tuple(rejected),
             conflicts=tuple(conflicts),
+            requires_exception_review=requires_exception_review,
         )
 
     def _validate_one(
@@ -143,21 +151,29 @@ class ObservationValidator:
 
         if isinstance(locator, TextOffsetLocator):
             for prior_locator, prior_candidate in accepted_spans:
-                if _text_offsets_overlap(prior_locator, locator):
-                    conflict = ObservationConflict(
-                        left=prior_candidate,
-                        right=candidate,
-                        reason=(
-                            "overlapping text evidence on the same part; "
-                            "later candidate rejected explicitly"
-                        ),
-                    )
-                    rejection = RejectedCandidate(
-                        candidate=candidate,
-                        reason=RejectionReason.OVERLAP_CONFLICT,
-                        detail=conflict.reason,
-                    )
-                    return rejection, conflict
+                if not _text_offsets_overlap(prior_locator, locator):
+                    continue
+                uncovered = not _span_fully_covered(locator, accepted_spans)
+                conflict = ObservationConflict(
+                    left=prior_candidate,
+                    right=candidate,
+                    reason=(
+                        "overlapping text evidence on the same part; "
+                        "later (narrower/lower-precedence) candidate rejected explicitly"
+                        + (
+                            "; residual uncovered evidence requires exception review"
+                            if uncovered
+                            else ""
+                        )
+                    ),
+                    leaves_uncovered_evidence=uncovered,
+                )
+                rejection = RejectedCandidate(
+                    candidate=candidate,
+                    reason=RejectionReason.OVERLAP_CONFLICT,
+                    detail=conflict.reason,
+                )
+                return rejection, conflict
 
         observation = _to_observation(part, candidate)
         try:
@@ -236,6 +252,24 @@ def _text_offsets_overlap(left: TextOffsetLocator, right: TextOffsetLocator) -> 
     return left.start < right.end and right.start < left.end
 
 
+def _span_fully_covered(
+    locator: TextOffsetLocator,
+    accepted_spans: list[tuple[TextOffsetLocator, CandidateObservation]],
+) -> bool:
+    """Return True when every offset in ``locator`` is inside some accepted span."""
+    for offset in range(locator.start, locator.end):
+        covered = False
+        for accepted, _candidate in accepted_spans:
+            if accepted.unit != locator.unit:
+                continue
+            if accepted.start <= offset < accepted.end:
+                covered = True
+                break
+        if not covered:
+            return False
+    return True
+
+
 def _dedupe_key(candidate: CandidateObservation) -> tuple[str, str]:
     return candidate.entity_type, _locator_fingerprint(candidate.evidence_locator)
 
@@ -250,19 +284,22 @@ def _locator_fingerprint(locator: OriginalLocator) -> str:
 
 def _candidate_sort_key(
     candidate: CandidateObservation,
-) -> tuple[int, int, str, str, str, float]:
+) -> tuple[int, float, int, str, str, str]:
+    """Coverage-preserving order: longest span, then highest score, then start."""
     locator = candidate.evidence_locator
     if isinstance(locator, TextOffsetLocator):
-        start, end = locator.start, locator.end
+        start = locator.start
+        length = locator.end - locator.start
     else:
-        start, end = -1, -1
+        # Field-path whole-field evidence sorts before text spans of equal score.
+        start = -1
+        length = 10**9
     score = candidate.score_value if candidate.score_value is not None else -1.0
-    # Higher scores first among equal spans (negate score).
     return (
+        -length,
+        -score,
         start,
-        end,
         candidate.entity_type,
         candidate.recognizer_id,
         candidate.recognizer_version,
-        -score,
     )

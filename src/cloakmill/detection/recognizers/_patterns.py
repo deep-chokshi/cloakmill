@@ -5,10 +5,12 @@ from __future__ import annotations
 import re
 
 # Practical email pattern; reserved .example domains in fixtures.
+# Trailing sentence punctuation (e.g. "alice@example.com.") must not block a match:
+# allow a final "." unless another domain label follows.
 EMAIL_RE = re.compile(
     r"(?<![A-Za-z0-9._%+-])"
     r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
-    r"(?![A-Za-z0-9._%+-])"
+    r"(?![A-Za-z0-9_%+-])(?!\.[A-Za-z0-9])"
 )
 
 # Synthetic employee ids: E- followed by 6 hex characters (see eval corpora).
@@ -16,9 +18,6 @@ EMPLOYEE_ID_RE = re.compile(r"(?<![A-Za-z0-9-])E-[0-9A-Fa-f]{6}(?![A-Za-z0-9-])"
 
 # Synthetic account ids: AC- followed by digits (see identity-preview / corpora).
 ACCOUNT_ID_RE = re.compile(r"(?<![A-Za-z0-9-])AC-\d{3,8}(?![A-Za-z0-9-])")
-
-# Candidate payment-card digit runs (13-19 digits, optional separators).
-PAYMENT_CARD_RE = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
 
 SCHEMA_FIELD_ALIASES: dict[str, str] = {
     "email": "email_address",

@@ -76,6 +76,24 @@ def test_email_recognizer_rejects_near_miss_local_parts() -> None:
     assert hits == ()
 
 
+def test_email_recognizer_allows_trailing_sentence_period() -> None:
+    text = "Write alice@example.com. Then follow up."
+    hits = EmailRecognizer().recognize(_text_part(text), text)
+    assert len(hits) == 1
+    locator = hits[0].evidence_locator
+    assert isinstance(locator, TextOffsetLocator)
+    assert text[locator.start : locator.end] == "alice@example.com"
+
+
+def test_email_recognizer_still_extends_through_domain_dot_labels() -> None:
+    text = "Contact maya@acme.example today"
+    hits = EmailRecognizer().recognize(_text_part(text), text)
+    assert len(hits) == 1
+    locator = hits[0].evidence_locator
+    assert isinstance(locator, TextOffsetLocator)
+    assert text[locator.start : locator.end] == "maya@acme.example"
+
+
 def test_employee_and_account_id_recognizers_are_precise() -> None:
     text = "Owner E-2C702C on AC-104; ignore EX-2C702C and ACCT-104."
     part = _text_part(text)
@@ -111,6 +129,16 @@ def test_payment_card_requires_luhn_checksum() -> None:
 
     invalid_hits = recognizer.recognize(_text_part(invalid), invalid)
     assert invalid_hits == ()
+
+
+def test_payment_card_recovers_from_greedy_nearby_digit_merge() -> None:
+    # Greedy ``(?:\d[ -]?){12,18}\d`` can absorb the leading ``1`` from ``qty 1``.
+    text = "qty 1 4111111111111111 purchased"
+    hits = PaymentCardRecognizer().recognize(_text_part(text), text)
+    assert len(hits) == 1
+    locator = hits[0].evidence_locator
+    assert isinstance(locator, TextOffsetLocator)
+    assert text[locator.start : locator.end] == "4111111111111111"
 
 
 def test_schema_field_recognizer_uses_field_path_evidence() -> None:

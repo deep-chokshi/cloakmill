@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from cloakmill.detection import DiscoveryEngine, PartInput, build_default_catalog
 from cloakmill.detection.candidates import CandidateObservation
+from cloakmill.detection.entity_types import ACCOUNT_ID, EMAIL_ADDRESS, PAYMENT_CARD
 from cloakmill.detection.validator import ObservationValidator, RejectionReason
 from cloakmill.domain import (
     CoverageState,
@@ -79,10 +81,32 @@ def test_validator_rejects_out_of_bounds_and_empty_spans() -> None:
     assert empty.rejected[0].reason is RejectionReason.EMPTY_SPAN
 
 
-def test_validator_conflicts_overlapping_evidence_explicitly() -> None:
+def test_validator_prefers_longer_span_on_overlap() -> None:
+    """Equal-start nested spans: longest match wins; shorter is contained."""
+    part = _part(30)
+    shorter = _candidate(
+        start=0,
+        end=6,
+        entity_type="account_id",
+        recognizer_id="rule.account_id",
+        version="rule.account_id/1.0.0",
+        score=0.95,
+    )
+    longer = _candidate(start=0, end=20, entity_type="email_address", score=0.9)
+    result = ObservationValidator().validate(part, (shorter, longer))
+
+    assert len(result.accepted) == 1
+    assert result.accepted[0].entity_type == "email_address"
+    assert len(result.rejected) == 1
+    assert result.rejected[0].reason is RejectionReason.OVERLAP_CONFLICT
+    assert result.conflicts[0].leaves_uncovered_evidence is False
+    assert result.requires_exception_review is False
+
+
+def test_validator_partial_overlap_flags_exception_review() -> None:
     part = _part(20)
-    first = _candidate(start=0, end=10, entity_type="email_address", score=0.9)
-    second = _candidate(
+    left = _candidate(start=0, end=10, entity_type="email_address", score=0.9)
+    right = _candidate(
         start=5,
         end=15,
         entity_type="employee_id",
@@ -90,15 +114,14 @@ def test_validator_conflicts_overlapping_evidence_explicitly() -> None:
         version="rule.employee_id/1.0.0",
         score=0.95,
     )
-    result = ObservationValidator().validate(part, (first, second))
+    result = ObservationValidator().validate(part, (left, right))
 
     assert len(result.accepted) == 1
-    assert result.accepted[0].entity_type == "email_address"
-    assert len(result.rejected) == 1
+    # Equal length: higher score wins.
+    assert result.accepted[0].entity_type == "employee_id"
     assert result.rejected[0].reason is RejectionReason.OVERLAP_CONFLICT
-    assert len(result.conflicts) == 1
-    assert result.conflicts[0].left == first
-    assert result.conflicts[0].right == second
+    assert result.conflicts[0].leaves_uncovered_evidence is True
+    assert result.requires_exception_review is True
 
 
 def test_validator_dedupes_identical_candidates() -> None:
@@ -135,3 +158,32 @@ def test_validator_ids_are_deterministic() -> None:
     second = ObservationValidator().validate(part, (candidate,)).accepted[0]
     assert first.opaque_id == second.opaque_id
     assert first.evidence_refs[0].opaque_id == second.evidence_refs[0].opaque_id
+
+
+def test_longest_match_keeps_email_over_nested_account_id() -> None:
+    text = "mail AC-104@acme.example today"
+    part = _part(len(text))
+    result = DiscoveryEngine(build_default_catalog()).discover([PartInput(part=part, content=text)])
+    email_obs = [o for o in result.observations if o.entity_type == EMAIL_ADDRESS]
+    assert len(email_obs) == 1
+    locator = email_obs[0].evidence_locator
+    assert isinstance(locator, TextOffsetLocator)
+    assert text[locator.start : locator.end] == "AC-104@acme.example"
+    # Nested account_id may still appear as a conflicted rejection, but must
+    # not be the sole accepted cover for the region.
+    account_accepted = [o for o in result.observations if o.entity_type == ACCOUNT_ID]
+    assert not account_accepted
+    assert result.requires_exception_review is False
+
+
+def test_longest_match_keeps_email_over_nested_payment_card() -> None:
+    text = "pay 4111111111111111@acme.example now"
+    part = _part(len(text))
+    result = DiscoveryEngine(build_default_catalog()).discover([PartInput(part=part, content=text)])
+    email_obs = [o for o in result.observations if o.entity_type == EMAIL_ADDRESS]
+    assert len(email_obs) == 1
+    locator = email_obs[0].evidence_locator
+    assert isinstance(locator, TextOffsetLocator)
+    assert text[locator.start : locator.end] == "4111111111111111@acme.example"
+    card_accepted = [o for o in result.observations if o.entity_type == PAYMENT_CARD]
+    assert not card_accepted
