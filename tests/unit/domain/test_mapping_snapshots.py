@@ -193,6 +193,50 @@ def test_version_fields_are_required() -> None:
         )
 
 
+@pytest.mark.parametrize("bad_id", [None, 12, True])
+def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
+    with pytest.raises(DomainValidationError):
+        NamespaceKeyRef.from_dict(
+            {"opaque_id": bad_id, "namespace_id": "ns-syn-demo", "key_version": "nk.v1"}
+        )
+    with pytest.raises(DomainValidationError):
+        EntityGraphVersion.from_dict(
+            {
+                "opaque_id": "egv-syn-demo-1",
+                "graph_version": "graph.v3",
+                "namespace_id": "ns-syn-demo",
+                "entity_ids": [bad_id],
+            }
+        )
+    with pytest.raises(DomainValidationError):
+        MappingAssignment.from_dict({"entity_id": bad_id, "profile_id": "prof-syn-a12"})
+    with pytest.raises(DomainValidationError):
+        MappingSnapshot.from_dict(
+            {
+                "opaque_id": "map-syn-demo-1",
+                "snapshot_version": "map.v3",
+                "namespace_id": "ns-syn-demo",
+                "entity_graph_version_id": bad_id,
+                "policy_version": "policy.content.v2",
+                "namespace_key_ref": _key_ref().to_dict(),
+                "assignments": [],
+            }
+        )
+    with pytest.raises(DomainValidationError):
+        PatchPlanEntry.from_dict(
+            {
+                "opaque_id": "patch-syn-email-1",
+                "mapping_snapshot_id": bad_id,
+                "artifact_version_id": "art-syn-crm-1",
+                "part_id": "part-syn-row-0-owner",
+                "locator": {"kind": "field_path", "path": ["rows", 0, "owner_email"]},
+                "action": "replace",
+                "entity_id": "ent-syn-maya",
+                "replacement_ref": "attr-syn-email-a12",
+            }
+        )
+
+
 def test_replace_and_inert_patch_constraints() -> None:
     base = {
         "opaque_id": "patch-syn-bad",

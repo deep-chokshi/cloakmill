@@ -39,9 +39,9 @@ class NamespaceKeyRef:
         if not isinstance(data, dict):
             raise DomainValidationError("namespace key ref must be an object")
         ref = cls(
-            opaque_id=str(data.get("opaque_id", "")),
-            namespace_id=str(data.get("namespace_id", "")),
-            key_version=str(data.get("key_version", "")),
+            opaque_id=data.get("opaque_id", ""),
+            namespace_id=data.get("namespace_id", ""),
+            key_version=data.get("key_version", ""),
         )
         validate_namespace_key_ref(ref)
         return ref
@@ -72,10 +72,10 @@ class EntityGraphVersion:
         if not isinstance(raw_ids, list):
             raise DomainValidationError("entity_ids must be a list")
         graph = cls(
-            opaque_id=str(data.get("opaque_id", "")),
-            graph_version=str(data.get("graph_version", "")),
-            namespace_id=str(data.get("namespace_id", "")),
-            entity_ids=tuple(str(item) for item in raw_ids),
+            opaque_id=data.get("opaque_id", ""),
+            graph_version=data.get("graph_version", ""),
+            namespace_id=data.get("namespace_id", ""),
+            entity_ids=tuple(raw_ids),
         )
         validate_entity_graph_version(graph)
         return graph
@@ -99,8 +99,8 @@ class MappingAssignment:
         if not isinstance(data, dict):
             raise DomainValidationError("mapping assignment must be an object")
         assignment = cls(
-            entity_id=str(data.get("entity_id", "")),
-            profile_id=str(data.get("profile_id", "")),
+            entity_id=data.get("entity_id", ""),
+            profile_id=data.get("profile_id", ""),
         )
         validate_mapping_assignment(assignment)
         return assignment
@@ -144,11 +144,11 @@ class MappingSnapshot:
         assignments = tuple(MappingAssignment.from_dict(item) for item in raw_assignments)
 
         snapshot = cls(
-            opaque_id=str(data.get("opaque_id", "")),
-            snapshot_version=str(data.get("snapshot_version", "")),
-            namespace_id=str(data.get("namespace_id", "")),
-            entity_graph_version_id=str(data.get("entity_graph_version_id", "")),
-            policy_version=str(data.get("policy_version", "")),
+            opaque_id=data.get("opaque_id", ""),
+            snapshot_version=data.get("snapshot_version", ""),
+            namespace_id=data.get("namespace_id", ""),
+            entity_graph_version_id=data.get("entity_graph_version_id", ""),
+            policy_version=data.get("policy_version", ""),
             namespace_key_ref=key_ref,
             assignments=assignments,
         )
@@ -195,10 +195,10 @@ class PatchPlanEntry:
             raise DomainValidationError(f"invalid patch plan entry fields: {exc}") from exc
 
         entry = cls(
-            opaque_id=str(data.get("opaque_id", "")),
-            mapping_snapshot_id=str(data.get("mapping_snapshot_id", "")),
-            artifact_version_id=str(data.get("artifact_version_id", "")),
-            part_id=str(data.get("part_id", "")),
+            opaque_id=data.get("opaque_id", ""),
+            mapping_snapshot_id=data.get("mapping_snapshot_id", ""),
+            artifact_version_id=data.get("artifact_version_id", ""),
+            part_id=data.get("part_id", ""),
             locator=locator,
             action=action,
             entity_id=data.get("entity_id"),
