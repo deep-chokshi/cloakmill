@@ -141,6 +141,35 @@ def test_payment_card_recovers_from_greedy_nearby_digit_merge() -> None:
     assert text[locator.start : locator.end] == "4111111111111111"
 
 
+def test_payment_card_recovers_from_greedy_trailing_year() -> None:
+    # Maximal token absorbs a following year that shares a space separator.
+    text = "card 4111111111111111 2024 on file"
+    hits = PaymentCardRecognizer().recognize(_text_part(text), text)
+    assert len(hits) == 1
+    locator = hits[0].evidence_locator
+    assert isinstance(locator, TextOffsetLocator)
+    assert text[locator.start : locator.end] == "4111111111111111"
+
+
+def test_payment_card_recovers_from_greedy_trailing_cvv() -> None:
+    text = "pan 4111-1111-1111-1111 123 auth"
+    hits = PaymentCardRecognizer().recognize(_text_part(text), text)
+    assert len(hits) == 1
+    locator = hits[0].evidence_locator
+    assert isinstance(locator, TextOffsetLocator)
+    assert text[locator.start : locator.end] == "4111-1111-1111-1111"
+
+
+def test_payment_card_recovers_from_greedy_trailing_expiry_prefix() -> None:
+    # ``12/24``: only ``12`` shares separators with the PAN; slash stops the token.
+    text = "pay 4111111111111111 12/24 ok"
+    hits = PaymentCardRecognizer().recognize(_text_part(text), text)
+    assert len(hits) == 1
+    locator = hits[0].evidence_locator
+    assert isinstance(locator, TextOffsetLocator)
+    assert text[locator.start : locator.end] == "4111111111111111"
+
+
 def test_schema_field_recognizer_uses_field_path_evidence() -> None:
     value = "alex.nguyen.0000@acme.example"
     part = _field_part(("records", 0, "email"), value)

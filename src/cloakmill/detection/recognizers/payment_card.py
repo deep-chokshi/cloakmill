@@ -20,10 +20,11 @@ _CARD_TOKEN_RE = re.compile(r"\d(?:[ -]?\d){12,18}")
 class PaymentCardRecognizer(RuleRecognizer):
     """Emit payment_card only when digit runs pass the Luhn checksum.
 
-    Greedy digit runs can absorb a nearby short digit (e.g. ``qty 1 4111...``).
-    Candidates are therefore started at every digit-run boundary and accepted
-    only when the exact span passes Luhn, so a valid card is not skipped after
-    a failed merged match.
+    Greedy digit runs can absorb a nearby short digit before the PAN
+    (e.g. ``qty 1 4111...``) or trailing year/CVV digits that share space or
+    hyphen separators. Candidates therefore start at every digit-run boundary,
+    and when the maximal token fails Luhn, shorter 13-19 digit prefixes inside
+    that token are tried so a valid card span is still emitted.
     """
 
     def __init__(self) -> None:
@@ -79,6 +80,35 @@ def _iter_luhn_spans(content: str) -> Iterator[tuple[int, int]]:
         char = content[index]
         if char.isdigit() and (index == 0 or not content[index - 1].isdigit()):
             match = _CARD_TOKEN_RE.match(content, index)
-            if match is not None and luhn_ok(digits_only(match.group(0))):
-                yield match.start(), match.end()
+            if match is not None:
+                span = _longest_luhn_prefix(content, match.start(), match.end())
+                if span is not None:
+                    yield span
         index += 1
+
+
+def _longest_luhn_prefix(content: str, start: int, end: int) -> tuple[int, int] | None:
+    """Return the longest Luhn-valid 13-19 digit prefix inside ``[start, end)``.
+
+    The maximal ``_CARD_TOKEN_RE`` match may absorb trailing year or CVV digits
+    that share space/hyphen separators. Walking digit-end offsets from longest
+    to shortest recovers the exact PAN span when the full token fails Luhn.
+    """
+    digit_ends: list[int] = []
+    index = start
+    while index < end:
+        char = content[index]
+        if char.isdigit():
+            digit_ends.append(index + 1)
+            index += 1
+            continue
+        if char in " -" and index + 1 < end and content[index + 1].isdigit():
+            index += 1
+            continue
+        break
+
+    for count in range(min(len(digit_ends), 19), 12, -1):
+        prefix_end = digit_ends[count - 1]
+        if luhn_ok(digits_only(content[start:prefix_end])):
+            return start, prefix_end
+    return None
