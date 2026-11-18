@@ -5,6 +5,7 @@ Python behavioral tests live under `unit/`, `integration/`, and `acceptance/` as
 Current coverage:
 
 - `unit/domain/` — F01 immutable artifact/part/locator/observation contracts, serialization round-trips, locator bound rejection, and domain import isolation.
+- `integration/connectors/` — F04 local-folder admission (bounded depth, symlink escape, size/type limits, exclusions), JSON/CSV/text extraction, inventory + coverage report, and release-facing path hygiene.
 
 Use synthetic fixtures exclusively. Prefer reserved example domains (for example `acme.example`). Never commit enterprise data, secrets, or source-to-synthetic mappings.
 
