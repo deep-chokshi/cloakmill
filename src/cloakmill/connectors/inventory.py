@@ -26,14 +26,20 @@ class InventoryEntry:
     byte_size: int | None = None
     private_integrity_digest: str | None = None
 
-    def to_dict(self, *, include_private_digest: bool = False) -> dict[str, Any]:
+    def to_dict(
+        self,
+        *,
+        include_private_digest: bool = False,
+        include_package_path: bool = True,
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "opaque_id": self.opaque_id,
-            "relative_package_path": self.relative_package_path,
             "disposition": self.disposition.value,
             "reason": self.reason.value,
             "coverage_state": self.coverage_state.value,
         }
+        if include_package_path:
+            payload["relative_package_path"] = self.relative_package_path
         if self.media_type is not None:
             payload["media_type"] = self.media_type
         if self.byte_size is not None:

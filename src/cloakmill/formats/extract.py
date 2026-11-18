@@ -56,6 +56,8 @@ def extract_parts_for_media_type(
             artifact_version_id=artifact_version_id,
             payload=payload,
         )
+        if result.decode_errors:
+            return FormatExtractResult(parts=(), ok=False, error="UnicodeDecodeError")
         return FormatExtractResult(parts=result.parts, ok=True)
 
     return FormatExtractResult(parts=(), ok=False, error="unsupported_media_type")

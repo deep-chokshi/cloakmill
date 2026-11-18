@@ -191,13 +191,18 @@ def test_release_facing_structures_omit_absolute_paths(tmp_path: Path) -> None:
 
     parsed = json.loads(payload)
     for entry in parsed["inventory"]:
-        rel = entry["relative_package_path"]
-        assert not rel.startswith("/")
-        assert ".." not in rel.split("/")
+        assert "relative_package_path" not in entry
         assert "private_integrity_digest" not in entry
+        assert "opaque_id" in entry
     for entry in parsed["coverage"]["entries"]:
-        assert not entry["relative_package_path"].startswith("/")
+        assert "relative_package_path" not in entry
         assert "private_integrity_digest" not in entry
+        assert "opaque_id" in entry
+    # Source path components must not leak into release-facing serialization.
+    assert "people.json" not in payload
+    assert "orders.csv" not in payload
+    assert "readme.txt" not in payload
+    assert "secrets" not in payload
 
     # Private digests remain available on the process inventory, not release JSON.
     admitted = [
@@ -205,6 +210,7 @@ def test_release_facing_structures_omit_absolute_paths(tmp_path: Path) -> None:
     ]
     assert admitted
     assert all(entry.private_integrity_digest for entry in admitted)
+    assert all(entry.relative_package_path for entry in admitted)
 
 
 def test_integrity_digest_matches_bytes(tmp_path: Path) -> None:
@@ -408,3 +414,40 @@ def test_normalize_rejects_backslash_spoofing() -> None:
 
     with pytest.raises(ValueError, match="backslash"):
         normalize_relative_package_path(r"secrets\token.txt")
+
+
+def test_bare_directory_exclusion_covers_descendants_and_symlink_targets(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "pkg"
+    _write(root / "secrets" / "token.txt", "not-a-real-secret\n")
+    (root / "alias.txt").symlink_to(root / "secrets" / "token.txt")
+    _write(root / "ok.txt", "fine\n")
+
+    result = ingest_local_folder(
+        root,
+        access_scope="project:syn-demo",
+        exclusions=("secrets",),
+    )
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["secrets"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["alias.txt"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert result.admitted_payloads and all(
+        payload.relative_package_path == "ok.txt" for payload in result.admitted_payloads
+    )
+
+
+def test_non_utf8_text_is_parse_failed(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "notes.txt").write_bytes("SSN 123-45-6789".encode("utf-16"))
+    _write(root / "ok.txt", "ascii-ok\n")
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["notes.txt"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["notes.txt"].reason is AdmissionReason.PARSE_FAILED
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert all(artifact.media_type == "text/plain" for artifact in result.artifacts)
+    assert len(result.artifacts) == 1

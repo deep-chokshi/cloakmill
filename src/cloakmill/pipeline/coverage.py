@@ -23,14 +23,15 @@ class CoverageEntry:
     media_type: str | None = None
     byte_size: int | None = None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, include_package_path: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "opaque_id": self.opaque_id,
-            "relative_package_path": self.relative_package_path,
             "coverage_state": self.coverage_state.value,
             "disposition": self.disposition.value,
             "reason": self.reason.value,
         }
+        if include_package_path:
+            payload["relative_package_path"] = self.relative_package_path
         if self.media_type is not None:
             payload["media_type"] = self.media_type
         if self.byte_size is not None:
@@ -47,12 +48,14 @@ class CoverageReport:
     totals: dict[str, int]
     entries: tuple[CoverageEntry, ...]
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, include_package_path: bool = True) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "access_scope": self.access_scope,
             "totals": dict(self.totals),
-            "entries": [entry.to_dict() for entry in self.entries],
+            "entries": [
+                entry.to_dict(include_package_path=include_package_path) for entry in self.entries
+            ],
         }
 
 

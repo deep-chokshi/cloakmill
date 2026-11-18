@@ -37,11 +37,14 @@ class IngestResult:
     admitted_payloads: tuple[AdmittedPayload, ...]
 
     def to_release_facing_dict(self) -> dict[str, Any]:
-        """Serialize inventory summary + coverage without digests or payloads."""
+        """Serialize inventory + coverage without digests, payloads, or source paths."""
         return {
             "access_scope": self.access_scope,
-            "inventory": [entry.to_dict(include_private_digest=False) for entry in self.inventory],
-            "coverage": self.coverage.to_dict(),
+            "inventory": [
+                entry.to_dict(include_private_digest=False, include_package_path=False)
+                for entry in self.inventory
+            ],
+            "coverage": self.coverage.to_dict(include_package_path=False),
             "artifact_ids": [artifact.opaque_id for artifact in self.artifacts],
             "part_ids": [part.opaque_id for part in self.parts],
         }

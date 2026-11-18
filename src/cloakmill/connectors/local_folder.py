@@ -5,7 +5,7 @@ from __future__ import annotations
 import fnmatch
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from cloakmill.connectors.admission import (
     AdmissionDisposition,
@@ -41,15 +41,27 @@ class LocalFolderScanResult:
     admitted: tuple[AdmittedPayload, ...]
 
 
+def _path_and_ancestors(relative_path: str) -> tuple[str, ...]:
+    """Return the path and every ancestor prefix (``a/b/c`` → ``a/b/c``, ``a/b``, ``a``)."""
+    parts = PurePosixPath(relative_path).parts
+    return tuple("/".join(parts[:index]) for index in range(len(parts), 0, -1))
+
+
 def _matches_exclusion(relative_path: str, patterns: Sequence[str]) -> bool:
+    """Match exclusions against the path and every ancestor (resolved or lexical)."""
+    candidates = _path_and_ancestors(relative_path)
     for pattern in patterns:
-        if fnmatch.fnmatchcase(relative_path, pattern):
-            return True
-        # Also allow directory-prefix style exclusions such as "secrets/**".
-        if pattern.endswith("/**") and (
-            relative_path == pattern[:-3] or relative_path.startswith(pattern[:-2])
-        ):
-            return True
+        for candidate in candidates:
+            if fnmatch.fnmatchcase(candidate, pattern):
+                return True
+            # Directory-prefix style exclusions such as "secrets/**".
+            if pattern.endswith("/**") and (
+                candidate == pattern[:-3] or candidate.startswith(pattern[:-2])
+            ):
+                return True
+            # Bare directory name excludes the directory and everything beneath it.
+            if candidate == pattern or candidate.startswith(f"{pattern}/"):
+                return True
     return False
 
 
