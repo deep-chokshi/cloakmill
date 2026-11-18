@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from cloakmill.formats import extract_parts_for_media_type
 from cloakmill.validation.coverage import CandidateArtifact
+from cloakmill.validation.errors import ValidationInputError
 from cloakmill.validation.findings import (
     CODE_STRUCTURE_JOIN_MISMATCH,
     CODE_STRUCTURE_REPARSE_FAILED,
@@ -53,6 +54,7 @@ def check_structure(
     """Reparse candidates; verify schemas and joins independently of writers."""
     findings: list[Finding] = []
     by_id = {item.artifact_version_id: item for item in candidates}
+    reparse_failed: set[str] = set()
 
     for artifact in by_id.values():
         if artifact.excluded:
@@ -63,6 +65,7 @@ def check_structure(
             payload=artifact.payload,
         )
         if not reparse.ok:
+            reparse_failed.add(artifact.artifact_version_id)
             subject = subject_ref_for(artifact_version_id=artifact.artifact_version_id)
             findings.append(
                 Finding(
@@ -98,7 +101,30 @@ def check_structure(
                 )
             )
             continue
-        actual_paths = field_paths_for_artifact(artifact)
+        if artifact.artifact_version_id in reparse_failed:
+            # Already blocked on reparse; do not raise or double-count schema.
+            continue
+        try:
+            actual_paths = field_paths_for_artifact(artifact)
+        except ValidationInputError:
+            reparse_failed.add(artifact.artifact_version_id)
+            subject = subject_ref_for(artifact_version_id=artifact.artifact_version_id)
+            findings.append(
+                Finding(
+                    opaque_id=finding_opaque_id(
+                        gate=GateKind.STRUCTURE.value,
+                        code=CODE_STRUCTURE_REPARSE_FAILED,
+                        subject_ref=subject,
+                    ),
+                    gate=GateKind.STRUCTURE,
+                    code=CODE_STRUCTURE_REPARSE_FAILED,
+                    artifact_version_id=artifact.artifact_version_id,
+                    detail_ref=identifier_detail_ref(
+                        f"{artifact.artifact_version_id}:surface_reparse"
+                    ),
+                )
+            )
+            continue
         if actual_paths != schema.field_paths:
             subject = subject_ref_for(artifact_version_id=schema.artifact_version_id)
             findings.append(
@@ -116,6 +142,11 @@ def check_structure(
             )
 
     for join in context.joins:
+        if (
+            join.left_artifact_version_id in reparse_failed
+            or join.right_artifact_version_id in reparse_failed
+        ):
+            continue
         left = by_id.get(join.left_artifact_version_id)
         right = by_id.get(join.right_artifact_version_id)
         left_value = read_field_value(left, join.left_path) if left is not None else None

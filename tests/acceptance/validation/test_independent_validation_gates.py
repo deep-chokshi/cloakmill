@@ -20,8 +20,10 @@ from cloakmill.transforms import (
     ATTRIBUTE_EMAIL,
     ATTRIBUTE_EMPLOYEE_ID,
     WRITER_VERSION,
+    ArtifactScope,
     PatchRequest,
     ReferentialKeyRewrite,
+    content_digest_sha256,
     plan_patches,
 )
 from cloakmill.validation import (
@@ -29,6 +31,7 @@ from cloakmill.validation import (
     CODE_PRIVACY_CANARY_DETECTED,
     CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
     CODE_STRUCTURE_JOIN_MISMATCH,
+    CODE_STRUCTURE_REPARSE_FAILED,
     CODE_STRUCTURE_SCHEMA_MISMATCH,
     VALIDATOR_VERSION,
     CandidateArtifact,
@@ -179,18 +182,26 @@ def _write_clean_candidates(frozen):
             attribute_key=ATTRIBUTE_EMPLOYEE_ID,
         ),
     )
-    plan = plan_patches(
-        frozen=frozen,
-        requests=requests,
-        referential_rewrites=referential,
-        writer_version=WRITER_VERSION,
-    )
-
     originals = {
         json_art: (json_original, "application/json"),
         csv_art: (csv_original, "text/csv"),
         text_art: (text_original, "text/plain"),
     }
+    scopes = tuple(
+        ArtifactScope(
+            artifact_version_id=art,
+            content_digest=content_digest_sha256(payload),
+        )
+        for art, (payload, _media) in originals.items()
+    )
+    plan = plan_patches(
+        frozen=frozen,
+        requests=requests,
+        referential_rewrites=referential,
+        artifact_scopes=scopes,
+        writer_version=WRITER_VERSION,
+    )
+
     written: dict[str, CandidateArtifact] = {}
     for art, (payload, media_type) in originals.items():
         result = write_artifact(
@@ -502,3 +513,56 @@ def test_schema_mismatch_blocks_structure_gate() -> None:
     )
     assert report.decision is ValidationDecision.BLOCK
     assert CODE_STRUCTURE_SCHEMA_MISMATCH in {finding.code for finding in report.findings}
+
+
+def test_malformed_json_candidate_blocks_with_reparse_failed() -> None:
+    """Corrupt writer output must BLOCK, not raise ValidationInputError."""
+    coverage = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-bad-json",
+                artifact_version_id="art-bad-json",
+                surface_key="document",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    privacy = PrivacyContext(
+        known_sources=(
+            KnownSourceIdentifier(
+                opaque_id="ks-unused",
+                normalized_value="maya@acme.example",
+                kind="email_address",
+            ),
+        ),
+        canaries=(SeededCanary(opaque_id="canary-unused", token="CANARY-TOKEN-7f3a"),),
+        allowed_synthetics=frozenset(),
+    )
+    report = validate_release_candidate(
+        candidate=ReleaseCandidate(
+            artifacts=(
+                CandidateArtifact(
+                    artifact_version_id="art-bad-json",
+                    media_type="application/json",
+                    payload=b"{bad",
+                ),
+            ),
+            expected_coverage=coverage,
+        ),
+        privacy=privacy,
+        structure=StructureContext(
+            schemas=(
+                SchemaExpectation(
+                    artifact_version_id="art-bad-json",
+                    field_paths=frozenset({("ticket", "owner_email")}),
+                ),
+            ),
+            joins=(),
+        ),
+    )
+    assert report.decision is ValidationDecision.BLOCK
+    assert CODE_STRUCTURE_REPARSE_FAILED in {finding.code for finding in report.findings}
+    assert_report_has_no_sensitive_leak(
+        report,
+        sensitive_values_for_leak_checks(privacy=privacy),
+    )
