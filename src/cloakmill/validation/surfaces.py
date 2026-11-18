@@ -57,25 +57,29 @@ def read_field_value(
         return None
     if artifact.media_type == "application/json":
         try:
-            document = json.loads(artifact.payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
+            document = _loads_json_document(artifact.payload.decode("utf-8"))
+        except (UnicodeDecodeError, ValidationInputError):
             return None
         return _scalar_at_path(document, path)
     if artifact.media_type == "application/x-ndjson":
+        # Physical line numbers must match ``_jsonl_surfaces`` / writers.
         try:
-            lines = [
-                json.loads(raw)
-                for raw in artifact.payload.decode("utf-8").splitlines()
-                if raw.strip()
-            ]
-        except (UnicodeDecodeError, json.JSONDecodeError):
+            raw_lines = artifact.payload.decode("utf-8").splitlines()
+        except UnicodeDecodeError:
             return None
         if not path:
             return None
         line_index = path[0]
-        if not isinstance(line_index, int) or line_index < 0 or line_index >= len(lines):
+        if not isinstance(line_index, int) or line_index < 0 or line_index >= len(raw_lines):
             return None
-        return _scalar_at_path(lines[line_index], path[1:])
+        raw = raw_lines[line_index]
+        if raw.strip() == "":
+            return None
+        try:
+            document = _loads_json_document(raw)
+        except ValidationInputError:
+            return None
+        return _scalar_at_path(document, path[1:])
     if artifact.media_type == "text/csv":
         return _csv_value_at_path(artifact.payload, path)
     if artifact.media_type == "text/plain":
@@ -104,35 +108,50 @@ def slice_observation_text(content: str, start: int, end: int) -> str:
     return content[start:end]
 
 
+def _loads_json_document(text: str) -> Any:
+    """Parse JSON, rejecting duplicate object keys and converting parse traps."""
+    try:
+        return json.loads(text, object_pairs_hook=_object_pairs_no_duplicates)
+    except ValidationInputError:
+        raise
+    except RecursionError as exc:
+        raise ValidationInputError(f"candidate JSON reparse failed: {type(exc).__name__}") from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValidationInputError(f"candidate JSON reparse failed: {type(exc).__name__}") from exc
+
+
+def _object_pairs_no_duplicates(pairs: list[tuple[Any, Any]]) -> dict[Any, Any]:
+    """Fail closed when a JSON object repeats a key (shadowed PII vector)."""
+    seen: set[Any] = set()
+    out: dict[Any, Any] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise ValidationInputError("candidate JSON reparse failed: DuplicateObjectKey")
+        seen.add(key)
+        out[key] = value
+    return out
+
+
 def _json_surfaces(artifact: CandidateArtifact) -> Iterator[CandidateSurface]:
     try:
-        document = json.loads(artifact.payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        document = _loads_json_document(artifact.payload.decode("utf-8"))
+    except UnicodeDecodeError as exc:
         raise ValidationInputError(f"candidate JSON reparse failed: {type(exc).__name__}") from exc
     leaves: list[tuple[tuple[str | int, ...], str]] = []
-    if isinstance(document, str):
-        leaves.append(((ROOT_SEGMENT,), document))
-    else:
-        collision = _walk_json(document, (), leaves)
-        if collision is not None:
-            raise ValidationInputError(f"candidate JSON reparse failed: {collision}")
-    for ordinal, (path, text) in enumerate(leaves):
-        part = Part(
-            opaque_id=part_id_for(artifact.artifact_version_id, "val-json", ordinal),
-            artifact_version_id=artifact.artifact_version_id,
-            surface_kind=SurfaceKind.STRUCTURED_FIELD,
-            original_locator=FieldPathLocator(path=path),
-            coverage_state=CoverageState.PROCESSED,
-            content_length=len(text),
-        )
-        leaf = path[-1] if path else None
-        yield CandidateSurface(
-            artifact_version_id=artifact.artifact_version_id,
-            media_type=artifact.media_type,
-            part=part,
-            content=text,
-            field_name=leaf if isinstance(leaf, str) else None,
-        )
+    key_texts: list[str] = []
+    try:
+        if not isinstance(document, dict | list):
+            text = _scalar_text(document)
+            if text is not None:
+                leaves.append(((ROOT_SEGMENT,), text))
+        else:
+            collision = _walk_json(document, (), leaves, key_texts)
+            if collision is not None:
+                raise ValidationInputError(f"candidate JSON reparse failed: {collision}")
+    except RecursionError as exc:
+        raise ValidationInputError(f"candidate JSON reparse failed: {type(exc).__name__}") from exc
+    yield from _surfaces_from_leaves(artifact, leaves, prefix="val-json")
+    yield from _key_scan_surfaces(artifact, key_texts, prefix="val-json-key")
 
 
 def _jsonl_surfaces(artifact: CandidateArtifact) -> Iterator[CandidateSurface]:
@@ -141,20 +160,26 @@ def _jsonl_surfaces(artifact: CandidateArtifact) -> Iterator[CandidateSurface]:
     except UnicodeDecodeError as exc:
         raise ValidationInputError("candidate JSONL reparse failed: UnicodeDecodeError") from exc
     ordinal = 0
+    key_ordinal = 0
     for line_no, raw in enumerate(text.splitlines()):
         if raw.strip() == "":
             continue
-        try:
-            document = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValidationInputError("candidate JSONL reparse failed: JSONDecodeError") from exc
+        document = _loads_json_document(raw)
         leaves: list[tuple[tuple[str | int, ...], str]] = []
-        if isinstance(document, str):
-            leaves.append(((line_no, ROOT_SEGMENT), document))
-        else:
-            collision = _walk_json(document, (line_no,), leaves)
-            if collision is not None:
-                raise ValidationInputError(f"candidate JSONL reparse failed: {collision}")
+        key_texts: list[str] = []
+        try:
+            if not isinstance(document, dict | list):
+                scalar = _scalar_text(document)
+                if scalar is not None:
+                    leaves.append(((line_no, ROOT_SEGMENT), scalar))
+            else:
+                collision = _walk_json(document, (line_no,), leaves, key_texts)
+                if collision is not None:
+                    raise ValidationInputError(f"candidate JSONL reparse failed: {collision}")
+        except RecursionError as exc:
+            raise ValidationInputError(
+                f"candidate JSONL reparse failed: {type(exc).__name__}"
+            ) from exc
         for path, value in leaves:
             part = Part(
                 opaque_id=part_id_for(artifact.artifact_version_id, "val-jsonl", ordinal),
@@ -173,6 +198,69 @@ def _jsonl_surfaces(artifact: CandidateArtifact) -> Iterator[CandidateSurface]:
                 field_name=leaf if isinstance(leaf, str) else None,
             )
             ordinal += 1
+        for key_surface in _key_scan_surfaces(
+            artifact, key_texts, prefix="val-jsonl-key", ordinal_offset=key_ordinal
+        ):
+            yield key_surface
+            key_ordinal += 1
+
+
+def _surfaces_from_leaves(
+    artifact: CandidateArtifact,
+    leaves: list[tuple[tuple[str | int, ...], str]],
+    *,
+    prefix: str,
+) -> Iterator[CandidateSurface]:
+    for ordinal, (path, text) in enumerate(leaves):
+        part = Part(
+            opaque_id=part_id_for(artifact.artifact_version_id, prefix, ordinal),
+            artifact_version_id=artifact.artifact_version_id,
+            surface_kind=SurfaceKind.STRUCTURED_FIELD,
+            original_locator=FieldPathLocator(path=path),
+            coverage_state=CoverageState.PROCESSED,
+            content_length=len(text),
+        )
+        leaf = path[-1] if path else None
+        yield CandidateSurface(
+            artifact_version_id=artifact.artifact_version_id,
+            media_type=artifact.media_type,
+            part=part,
+            content=text,
+            field_name=leaf if isinstance(leaf, str) else None,
+        )
+
+
+def _key_scan_surfaces(
+    artifact: CandidateArtifact,
+    key_texts: list[str],
+    *,
+    prefix: str,
+    ordinal_offset: int = 0,
+) -> Iterator[CandidateSurface]:
+    """Emit TEXT surfaces for decoded object keys (privacy scan only; not schema paths)."""
+    for index, key_text in enumerate(key_texts):
+        if not key_text:
+            continue
+        ordinal = ordinal_offset + index
+        part = Part(
+            opaque_id=part_id_for(artifact.artifact_version_id, prefix, ordinal),
+            artifact_version_id=artifact.artifact_version_id,
+            surface_kind=SurfaceKind.TEXT,
+            original_locator=TextOffsetLocator(
+                unit=TextOffsetUnit.CODEPOINTS,
+                start=0,
+                end=len(key_text),
+            ),
+            coverage_state=CoverageState.PROCESSED,
+            content_length=len(key_text),
+        )
+        yield CandidateSurface(
+            artifact_version_id=artifact.artifact_version_id,
+            media_type=artifact.media_type,
+            part=part,
+            content=key_text,
+            field_name=None,
+        )
 
 
 def _csv_surfaces(artifact: CandidateArtifact) -> Iterator[CandidateSurface]:
@@ -250,6 +338,7 @@ def _walk_json(
     value: Any,
     path: tuple[str | int, ...],
     out: list[tuple[tuple[str | int, ...], str]],
+    key_texts: list[str],
 ) -> str | None:
     """Walk JSON values; return an error code on encoded-key collision."""
     text = _scalar_text(value) if not isinstance(value, dict | list) else None
@@ -261,20 +350,22 @@ def _walk_json(
         return None
     if isinstance(value, list):
         for index, item in enumerate(value):
-            error = _walk_json(item, (*path, index), out)
+            error = _walk_json(item, (*path, index), out, key_texts)
             if error is not None:
                 return error
         return None
     if isinstance(value, dict):
         seen_encoded: set[str] = set()
         for key in sorted(value, key=lambda item: str(item)):
+            if isinstance(key, str):
+                key_texts.append(key)
             encoded = encode_field_key(key)
             if encoded is None:
                 continue
             if encoded == ROOT_SEGMENT or encoded in seen_encoded:
                 return "EncodedKeyCollision"
             seen_encoded.add(encoded)
-            error = _walk_json(value[key], (*path, encoded), out)
+            error = _walk_json(value[key], (*path, encoded), out, key_texts)
             if error is not None:
                 return error
         return None

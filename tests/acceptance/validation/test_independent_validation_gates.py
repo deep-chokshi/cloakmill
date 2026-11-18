@@ -791,3 +791,147 @@ def test_duplicate_artifact_ids_rejected() -> None:
             privacy=privacy,
             structure=StructureContext(),
         )
+
+
+def test_json_unicode_escape_in_object_key_blocks_privacy() -> None:
+    """Escaped identifiers in JSON object keys must BLOCK via decoded key scan."""
+    coverage = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-key",
+                artifact_version_id="art-key",
+                surface_key="document",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    # Key is maya@acme.example encoded as \\uXXXX style for the local part separator.
+    payload = b'{"maya\\u0040acme.example":"x"}\n'
+    privacy = PrivacyContext(
+        known_sources=(
+            KnownSourceIdentifier(
+                opaque_id="ks-maya",
+                normalized_value="maya@acme.example",
+                kind="email_address",
+            ),
+        ),
+        allowed_synthetics=frozenset(),
+    )
+    report = validate_release_candidate(
+        candidate=ReleaseCandidate(
+            artifacts=(
+                CandidateArtifact(
+                    artifact_version_id="art-key",
+                    media_type="application/json",
+                    payload=payload,
+                ),
+            ),
+            expected_coverage=coverage,
+        ),
+        privacy=privacy,
+        structure=StructureContext(),
+    )
+    assert report.decision is ValidationDecision.BLOCK
+    assert CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE in {finding.code for finding in report.findings}
+    assert_report_has_no_sensitive_leak(
+        report,
+        sensitive_values_for_leak_checks(privacy=privacy),
+    )
+
+
+def test_duplicate_json_object_keys_block_as_unscannable() -> None:
+    """Shadowed duplicate keys must fail closed (not last-wins PASS)."""
+    coverage = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-dup",
+                artifact_version_id="art-dup",
+                surface_key="document",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    privacy = PrivacyContext(
+        known_sources=(
+            KnownSourceIdentifier(
+                opaque_id="ks-maya",
+                normalized_value="maya@acme.example",
+                kind="email_address",
+            ),
+        ),
+        allowed_synthetics=frozenset(),
+    )
+    report = validate_release_candidate(
+        candidate=ReleaseCandidate(
+            artifacts=(
+                CandidateArtifact(
+                    artifact_version_id="art-dup",
+                    media_type="application/json",
+                    payload=b'{"r":"maya@acme.example","r":"ok"}\n',
+                ),
+            ),
+            expected_coverage=coverage,
+        ),
+        privacy=privacy,
+        structure=StructureContext(),
+    )
+    assert report.decision is ValidationDecision.BLOCK
+    codes = {finding.code for finding in report.findings}
+    assert CODE_PRIVACY_UNSCANNABLE_CANDIDATE in codes or CODE_STRUCTURE_REPARSE_FAILED in codes
+
+
+def test_oversized_json_integer_blocks_without_raising() -> None:
+    """Oversized JSON integers (ValueError) must BLOCK, not raise."""
+    coverage = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-bigint",
+                artifact_version_id="art-bigint",
+                surface_key="document",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    privacy = PrivacyContext(
+        known_sources=(
+            KnownSourceIdentifier(
+                opaque_id="ks-maya",
+                normalized_value="maya@acme.example",
+                kind="email_address",
+            ),
+        ),
+        allowed_synthetics=frozenset(),
+    )
+    payload = b'{"n": ' + b"1" * 5000 + b"}"
+    report = validate_release_candidate(
+        candidate=ReleaseCandidate(
+            artifacts=(
+                CandidateArtifact(
+                    artifact_version_id="art-bigint",
+                    media_type="application/json",
+                    payload=payload,
+                ),
+            ),
+            expected_coverage=coverage,
+        ),
+        privacy=privacy,
+        structure=StructureContext(),
+    )
+    assert report.decision is ValidationDecision.BLOCK
+    codes = {finding.code for finding in report.findings}
+    assert CODE_PRIVACY_UNSCANNABLE_CANDIDATE in codes or CODE_STRUCTURE_REPARSE_FAILED in codes
+
+
+def test_ndjson_physical_line_join_uses_splitlines_index() -> None:
+    """Blank lines must not shift NDJSON join indexes relative to surface paths."""
+    from cloakmill.validation.surfaces import read_field_value
+
+    payload = b'{"id":"A"}\n\n{"id":"B"}\n'
+    artifact = CandidateArtifact(
+        artifact_version_id="art-ndjson",
+        media_type="application/x-ndjson",
+        payload=payload,
+    )
+    assert read_field_value(artifact, (0, "id")) == "A"
+    assert read_field_value(artifact, (2, "id")) == "B"
+    assert read_field_value(artifact, (1, "id")) is None
