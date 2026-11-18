@@ -177,6 +177,25 @@ def test_corrupt_json_is_quarantined_as_parse_failed(tmp_path: Path) -> None:
     assert result.parts == ()
 
 
+def test_duplicate_json_object_keys_fail_closed(tmp_path: Path) -> None:
+    """Duplicate keys must not last-wins into PROCESSED coverage (F09-aligned)."""
+    root = tmp_path / "pkg"
+    _write(root / "dup.json", b'{"r":"maya@acme.example","r":"ok"}\n')
+    _write(root / "rows.jsonl", b'{"id":"a","id":"b"}\n')
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["dup.json"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["dup.json"].reason is AdmissionReason.PARSE_FAILED
+    assert by_path["dup.json"].coverage_state is CoverageState.FAILED
+    assert by_path["rows.jsonl"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["rows.jsonl"].reason is AdmissionReason.PARSE_FAILED
+    assert by_path["rows.jsonl"].coverage_state is CoverageState.FAILED
+    assert result.artifacts == ()
+    assert result.parts == ()
+    assert result.admitted_payloads == ()
+
+
 def test_release_facing_structures_omit_absolute_paths(tmp_path: Path) -> None:
     root = tmp_path / "pkg"
     _synthetic_tree(root)

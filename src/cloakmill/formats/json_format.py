@@ -18,10 +18,34 @@ EMPTY_KEY_SEGMENT = "$empty_key"
 KEY_SURFACE_PREFIX = "$key"
 
 
+class DuplicateObjectKeyError(ValueError):
+    """JSON object repeated a key; stdlib last-wins parse would hide earlier values.
+
+    Mirrors F09 ``ValidationInputError(... DuplicateObjectKey)`` fail-closed policy.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class JsonExtractResult(ExtractedParts):
     parse_error: str | None = None
     skipped_leaves: int = 0
+
+
+def _object_pairs_no_duplicates(pairs: list[tuple[Any, Any]]) -> dict[Any, Any]:
+    """Fail closed when a JSON object repeats a key (shadowed PII vector)."""
+    seen: set[Any] = set()
+    out: dict[Any, Any] = {}
+    for key, value in pairs:
+        if key in seen:
+            raise DuplicateObjectKeyError("DuplicateObjectKey")
+        seen.add(key)
+        out[key] = value
+    return out
+
+
+def _loads_json_document(text: str) -> Any:
+    """Parse JSON, rejecting duplicate object keys (no last-wins)."""
+    return json.loads(text, object_pairs_hook=_object_pairs_no_duplicates)
 
 
 def _encode_key(key: object) -> str | None:
@@ -102,13 +126,19 @@ def extract_json_parts(
     artifact_version_id: str,
     payload: bytes,
 ) -> JsonExtractResult:
-    """Parse a JSON document and emit parts for extractable leaf fields."""
+    """Parse a JSON document and emit parts for extractable leaf fields.
+
+    Duplicate object keys fail closed (``DuplicateObjectKey``) so shadowed
+    values cannot stay invisible while coverage reports PROCESSED.
+    """
     try:
         text = payload.decode("utf-8")
-        document = json.loads(text)
+        document = _loads_json_document(text)
+    except DuplicateObjectKeyError:
+        return JsonExtractResult(parts=(), parse_error="DuplicateObjectKey")
     except RecursionError:
         return JsonExtractResult(parts=(), parse_error="RecursionError")
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         return JsonExtractResult(parts=(), parse_error=type(exc).__name__)
 
     leaves: list[tuple[tuple[str | int, ...], str]] = []
@@ -157,10 +187,12 @@ def extract_jsonl_parts(
         if line == "":
             continue
         try:
-            document = json.loads(line)
+            document = _loads_json_document(line)
+        except DuplicateObjectKeyError:
+            return JsonExtractResult(parts=(), parse_error="DuplicateObjectKey")
         except RecursionError:
             return JsonExtractResult(parts=(), parse_error="RecursionError")
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ValueError):
             return JsonExtractResult(parts=(), parse_error="JSONDecodeError")
         leaves: list[tuple[tuple[str | int, ...], str]] = []
         keys: list[tuple[tuple[str | int, ...], str]] = []
