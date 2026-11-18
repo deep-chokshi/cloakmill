@@ -1,6 +1,6 @@
 """Unit tests for replacement safety and patch overlap resolution."""
 
-# security-scan-retrigger marker
+# security-scan-retrigger marker (pr-open)
 
 
 from __future__ import annotations
