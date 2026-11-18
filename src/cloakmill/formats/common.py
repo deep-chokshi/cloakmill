@@ -5,16 +5,13 @@ from __future__ import annotations
 import hashlib
 import re
 
-# F08 writers cannot rename object keys / CSV headers. Only schema-shaped names
-# are admitted so person-keyed documents fail closed instead of leaking PII.
-#
-# Shape rules (no connector schema yet):
-# - lowercase snake_case with at least one underscore, or
-# - a short token from the structural allow-list below.
-# Uppercase, camelCase, bare usernames, and separator-free IDs are rejected.
-_SCHEMA_SNAKE_KEY_RE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
-_ALLOWED_SHORT_SCHEMA_KEYS = frozenset(
+# F08 writers cannot rename object keys / CSV headers. Until connectors supply a
+# schema, only this explicit allow-list is admitted so person-keyed documents
+# (usernames, name slugs, IDs) fail closed instead of leaking PII.
+_SCHEMA_KEY_SHAPE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_ALLOWED_SCHEMA_KEYS = frozenset(
     {
+        # Structural / document shape
         "id",
         "ok",
         "key",
@@ -29,9 +26,8 @@ _ALLOWED_SHORT_SCHEMA_KEYS = frozenset(
         "role",
         "org",
         "user",
-        "email",
-        "phone",
         "ticket",
+        "tickets",
         "value",
         "status",
         "count",
@@ -49,6 +45,22 @@ _ALLOWED_SHORT_SCHEMA_KEYS = frozenset(
         "message",
         "account",
         "username",
+        "blob",
+        "phone",
+        "email",
+        # Common schema field names used by synthetic fixtures / writers
+        "owner_email",
+        "owner_id",
+        "watcher_id",
+        "assignee_email",
+        "employee_id",
+        "account_id",
+        "full_name",
+        "given_name",
+        "family_name",
+        "display_name",
+        "organization_name",
+        "email_address",
     }
 )
 
@@ -61,9 +73,9 @@ def part_id_for(artifact_version_id: str, kind: str, index: int) -> str:
 
 
 def is_schema_safe_key(key: str) -> bool:
-    """Return True when ``key`` is a schema identifier (not person-keyed content)."""
+    """Return True when ``key`` is an allow-listed schema identifier."""
     if not isinstance(key, str) or not key:
         return False
-    if "_" in key:
-        return bool(_SCHEMA_SNAKE_KEY_RE.fullmatch(key))
-    return key in _ALLOWED_SHORT_SCHEMA_KEYS
+    if not _SCHEMA_KEY_SHAPE_RE.fullmatch(key):
+        return False
+    return key in _ALLOWED_SCHEMA_KEYS

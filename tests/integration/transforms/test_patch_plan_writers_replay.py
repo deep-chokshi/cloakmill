@@ -525,6 +525,12 @@ def test_non_schema_and_person_keyed_surfaces_fail_closed() -> None:
     assert username_result.parts == ()
     assert username_result.parse_error == "UncoveredKeys"
 
+    # Snake_case person slugs must not be inferred as schema keys from shape alone.
+    slug_json = b'{"maya_lopez":{"salary":120000},"jordan_chen":{"salary":98000}}\n'
+    slug_result = extract_json_parts(artifact_version_id="art-slugs", payload=slug_json)
+    assert slug_result.parts == ()
+    assert slug_result.parse_error == "UncoveredKeys"
+
     person_csv = b"maya@acme.example,jordan@acme.example\n1,2\n"
     csv_result = extract_csv_parts(artifact_version_id="art-person-csv", payload=person_csv)
     assert csv_result.parts == ()
@@ -536,6 +542,11 @@ def test_non_schema_and_person_keyed_surfaces_fail_closed() -> None:
     )
     assert username_csv_result.parts == ()
     assert username_csv_result.parse_error == "UncoveredKeys"
+
+    slug_csv = b"maya_lopez,jordan_chen\n1,2\n"
+    slug_csv_result = extract_csv_parts(artifact_version_id="art-slug-csv", payload=slug_csv)
+    assert slug_csv_result.parts == ()
+    assert slug_csv_result.parse_error == "UncoveredKeys"
 
     # Schema-safe keys still round-trip; sentinel constants remain exported for writers.
     assert EMPTY_KEY_SEGMENT.startswith("$")
@@ -560,6 +571,12 @@ def test_json_writers_reject_person_keyed_documents() -> None:
                 content_digest=content_digest_sha256(b'{"jsmith":{"tickets":1}}\n'),
             ),
             ArtifactScope(
+                artifact_version_id="art-json-slugs",
+                content_digest=content_digest_sha256(
+                    b'{"maya_lopez":{"salary":120000},"jordan_chen":{"salary":98000}}\n'
+                ),
+            ),
+            ArtifactScope(
                 artifact_version_id="art-jsonl-keys",
                 content_digest=content_digest_sha256(b'{"maya@acme.example":{"salary":120000}}\n'),
             ),
@@ -579,6 +596,14 @@ def test_json_writers_reject_person_keyed_documents() -> None:
             media_type="application/json",
             original_payload=b'{"jsmith":{"tickets":1}}\n',
             artifact_version_id="art-json-users",
+            plan=plan,
+        )
+
+    with pytest.raises(WriterError, match="uncovered key-position content"):
+        write_artifact(
+            media_type="application/json",
+            original_payload=b'{"maya_lopez":{"salary":120000},"jordan_chen":{"salary":98000}}\n',
+            artifact_version_id="art-json-slugs",
             plan=plan,
         )
 
