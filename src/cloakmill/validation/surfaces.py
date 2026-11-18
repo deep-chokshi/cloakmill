@@ -277,6 +277,8 @@ def _csv_surfaces(artifact: CandidateArtifact) -> Iterator[CandidateSurface]:
     header = rows[0]
     if not header or any(name.strip() == "" for name in header) or len(set(header)) != len(header):
         raise ValidationInputError("candidate CSV reparse failed: InvalidHeader")
+    # Header cells are privacy-scan TEXT surfaces only (not schema FieldPathLocator paths).
+    yield from _key_scan_surfaces(artifact, list(header), prefix="val-csv-header")
     ordinal = 0
     for row_index, row in enumerate(rows[1:]):
         width = max(len(header), len(row))

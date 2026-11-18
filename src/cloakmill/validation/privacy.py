@@ -14,6 +14,7 @@ from cloakmill.validation.coverage import CandidateArtifact
 from cloakmill.validation.errors import ValidationInputError
 from cloakmill.validation.findings import (
     CODE_PRIVACY_CANARY_DETECTED,
+    CODE_PRIVACY_INCOMPLETE_SCAN,
     CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
     CODE_PRIVACY_UNEXPECTED_IDENTIFIER,
     CODE_PRIVACY_UNSCANNABLE_CANDIDATE,
@@ -189,7 +190,22 @@ def _independent_rule_scan(
         return findings
 
     content_by_part = {surface.part.opaque_id: surface.content for surface in surfaces}
+    artifact_by_part = {surface.part.opaque_id: surface.artifact_version_id for surface in surfaces}
     result = discovery.discover(part_inputs)
+    # Fail closed on detection-layer "may have missed residual" signals.
+    for part_result in result.parts:
+        if not (
+            part_result.requires_exception_review or part_result.conflicts or part_result.rejected
+        ):
+            continue
+        findings.append(
+            _privacy_finding(
+                code=CODE_PRIVACY_INCOMPLETE_SCAN,
+                artifact_version_id=artifact_by_part.get(part_result.part_id),
+                detail_seed=f"incomplete:{part_result.part_id}",
+                subject_extra=part_result.part_id,
+            )
+        )
     for observation in result.observations:
         content = content_by_part.get(observation.part_id, "")
         locator = observation.evidence_locator

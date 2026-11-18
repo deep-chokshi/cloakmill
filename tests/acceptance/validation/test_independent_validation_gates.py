@@ -33,7 +33,9 @@ from cloakmill.validation import (
     CODE_COVERAGE_GAP,
     CODE_COVERAGE_OBSERVED_TAMPER,
     CODE_PRIVACY_CANARY_DETECTED,
+    CODE_PRIVACY_INCOMPLETE_SCAN,
     CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
+    CODE_PRIVACY_UNEXPECTED_IDENTIFIER,
     CODE_PRIVACY_UNSCANNABLE_CANDIDATE,
     CODE_PRIVACY_UNSUPPORTED_KIND,
     CODE_STRUCTURE_JOIN_MISMATCH,
@@ -936,3 +938,90 @@ def test_ndjson_physical_line_join_uses_splitlines_index() -> None:
     assert read_field_value(artifact, (0, "id")) == "A"
     assert read_field_value(artifact, (2, "id")) == "B"
     assert read_field_value(artifact, (1, "id")) is None
+
+
+def test_discovery_exception_review_blocks_privacy_incomplete_scan() -> None:
+    """Uncovered card-length digit runs must BLOCK via incomplete_scan, not PASS."""
+    coverage = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-review",
+                artifact_version_id="art-review",
+                surface_key="body",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    # Luhn-invalid 16-digit run → PaymentCardRecognizer sets exception_review_required.
+    privacy = PrivacyContext(known_sources=(), allowed_synthetics=frozenset())
+    report = validate_release_candidate(
+        candidate=ReleaseCandidate(
+            artifacts=(
+                CandidateArtifact(
+                    artifact_version_id="art-review",
+                    media_type="text/plain",
+                    payload=b"card 4111111111111112 rejected\n",
+                ),
+            ),
+            expected_coverage=coverage,
+        ),
+        privacy=privacy,
+        structure=StructureContext(),
+    )
+    assert report.decision is ValidationDecision.BLOCK
+    assert CODE_PRIVACY_INCOMPLETE_SCAN in {finding.code for finding in report.findings}
+    assert_report_has_no_sensitive_leak(report, ("4111111111111112",))
+
+
+def test_csv_header_identifier_blocks_privacy_and_stays_out_of_schema() -> None:
+    """CSV header cells must be scanned as TEXT; schema paths stay data-row only."""
+    from cloakmill.validation.surfaces import field_paths_for_artifact, iter_candidate_surfaces
+
+    # Schema-safe header embedding a Luhn-valid synthetic PAN (not in known_sources).
+    payload = b"card_4111111111111111,note\nx,ok\n"
+    artifact = CandidateArtifact(
+        artifact_version_id="art-csv-hdr",
+        media_type="text/csv",
+        payload=payload,
+    )
+    surfaces = iter_candidate_surfaces(artifact)
+    assert any(
+        surface.part.surface_kind.value == "text" and "4111111111111111" in surface.content
+        for surface in surfaces
+    )
+    paths = field_paths_for_artifact(artifact)
+    assert ("rows", 0, "card_4111111111111111") in paths
+    assert all(path[:1] == ("rows",) for path in paths)
+
+    coverage = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-csv-hdr",
+                artifact_version_id="art-csv-hdr",
+                surface_key="document",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    privacy = PrivacyContext(known_sources=(), allowed_synthetics=frozenset())
+    report = validate_release_candidate(
+        candidate=ReleaseCandidate(
+            artifacts=(artifact,),
+            expected_coverage=coverage,
+        ),
+        privacy=privacy,
+        structure=StructureContext(
+            schemas=(
+                SchemaExpectation(
+                    artifact_version_id="art-csv-hdr",
+                    field_paths=paths,
+                ),
+            ),
+            joins=(),
+        ),
+    )
+    assert report.decision is ValidationDecision.BLOCK
+    codes = {finding.code for finding in report.findings}
+    assert CODE_PRIVACY_UNEXPECTED_IDENTIFIER in codes
+    assert CODE_STRUCTURE_SCHEMA_MISMATCH not in codes
+    assert_report_has_no_sensitive_leak(report, ("4111111111111111",))
