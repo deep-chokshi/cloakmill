@@ -7,6 +7,7 @@ check:
 	uv run --locked ruff check .
 	uv run --locked ruff format --check .
 	uv run --locked python -c "import cloakmill; print(cloakmill.__version__)"
+	uv run --locked pytest
 
 format:
 	uv run --locked ruff format .
