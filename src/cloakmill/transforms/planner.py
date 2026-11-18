@@ -19,6 +19,7 @@ from cloakmill.domain.mapping import (
     MappingSnapshot,
     PatchPlanEntry,
     validate_mapping_snapshot,
+    validate_mapping_snapshot_structure,
     validate_patch_plan_entry,
 )
 from cloakmill.identity.freeze import FrozenMappingBundle
@@ -115,12 +116,20 @@ def plan_patches(
     referential_rewrites: Sequence[ReferentialKeyRewrite] = (),
     artifact_scopes: Sequence[ArtifactScope] = (),
     writer_version: str = WRITER_VERSION,
+    namespace_secret: bytes | None = None,
 ) -> PatchPlan:
-    """Build a deterministic patch plan from policy intents and frozen profiles."""
+    """Build a deterministic patch plan from policy intents and frozen profiles.
+
+    Structure is always validated. When ``namespace_secret`` is provided, the
+    snapshot HMAC commitment is authenticated as well (F07 mapping integrity).
+    """
     if not isinstance(frozen, FrozenMappingBundle):
         raise TransformError("plan_patches requires a FrozenMappingBundle")
     snapshot = frozen.snapshot
-    validate_mapping_snapshot(snapshot)
+    if namespace_secret is None:
+        validate_mapping_snapshot_structure(snapshot)
+    else:
+        validate_mapping_snapshot(snapshot, namespace_secret=namespace_secret)
     if writer_version.strip() == "":
         raise TransformError("writer_version must be non-empty")
 
@@ -338,7 +347,10 @@ def _dedupe_field_requests(requests: Sequence[PatchRequest]) -> list[PatchReques
             by_path[path] = request
             continue
         if not _requests_semantically_equal(existing, request):
-            raise PatchConflictError(f"conflicting patches for field path {list(path)!r}")
+            raise PatchConflictError(
+                f"conflicting patches for field path "
+                f"(requests {existing.request_id!r} vs {request.request_id!r})"
+            )
     return list(by_path.values())
 
 
