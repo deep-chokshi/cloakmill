@@ -200,6 +200,28 @@ def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
             {"opaque_id": bad_id, "namespace_id": "ns-syn-demo", "key_version": "nk.v1"}
         )
     with pytest.raises(DomainValidationError):
+        NamespaceKeyRef.from_dict(
+            {"opaque_id": "nkr-syn-demo-1", "namespace_id": bad_id, "key_version": "nk.v1"}
+        )
+    with pytest.raises(DomainValidationError):
+        EntityGraphVersion.from_dict(
+            {
+                "opaque_id": bad_id,
+                "graph_version": "graph.v3",
+                "namespace_id": "ns-syn-demo",
+                "entity_ids": ["ent-syn-maya"],
+            }
+        )
+    with pytest.raises(DomainValidationError):
+        EntityGraphVersion.from_dict(
+            {
+                "opaque_id": "egv-syn-demo-1",
+                "graph_version": "graph.v3",
+                "namespace_id": bad_id,
+                "entity_ids": ["ent-syn-maya"],
+            }
+        )
+    with pytest.raises(DomainValidationError):
         EntityGraphVersion.from_dict(
             {
                 "opaque_id": "egv-syn-demo-1",
@@ -211,6 +233,32 @@ def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
     with pytest.raises(DomainValidationError):
         MappingAssignment.from_dict({"entity_id": bad_id, "profile_id": "prof-syn-a12"})
     with pytest.raises(DomainValidationError):
+        MappingAssignment.from_dict({"entity_id": "ent-syn-maya", "profile_id": bad_id})
+    with pytest.raises(DomainValidationError):
+        MappingSnapshot.from_dict(
+            {
+                "opaque_id": bad_id,
+                "snapshot_version": "map.v3",
+                "namespace_id": "ns-syn-demo",
+                "entity_graph_version_id": "egv-syn-demo-1",
+                "policy_version": "policy.content.v2",
+                "namespace_key_ref": _key_ref().to_dict(),
+                "assignments": [],
+            }
+        )
+    with pytest.raises(DomainValidationError):
+        MappingSnapshot.from_dict(
+            {
+                "opaque_id": "map-syn-demo-1",
+                "snapshot_version": "map.v3",
+                "namespace_id": bad_id,
+                "entity_graph_version_id": "egv-syn-demo-1",
+                "policy_version": "policy.content.v2",
+                "namespace_key_ref": _key_ref().to_dict(),
+                "assignments": [],
+            }
+        )
+    with pytest.raises(DomainValidationError):
         MappingSnapshot.from_dict(
             {
                 "opaque_id": "map-syn-demo-1",
@@ -220,6 +268,36 @@ def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
                 "policy_version": "policy.content.v2",
                 "namespace_key_ref": _key_ref().to_dict(),
                 "assignments": [],
+            }
+        )
+    with pytest.raises(DomainValidationError):
+        # Both namespace fields null must not coerce-match as "None" == "None".
+        MappingSnapshot.from_dict(
+            {
+                "opaque_id": None,
+                "snapshot_version": "map.v1",
+                "namespace_id": None,
+                "entity_graph_version_id": None,
+                "policy_version": "p.v1",
+                "namespace_key_ref": {
+                    "opaque_id": None,
+                    "namespace_id": None,
+                    "key_version": "nk.v1",
+                },
+                "assignments": [{"entity_id": None, "profile_id": None}],
+            }
+        )
+    with pytest.raises(DomainValidationError):
+        PatchPlanEntry.from_dict(
+            {
+                "opaque_id": bad_id,
+                "mapping_snapshot_id": "map-syn-demo-1",
+                "artifact_version_id": "art-syn-crm-1",
+                "part_id": "part-syn-row-0-owner",
+                "locator": {"kind": "field_path", "path": ["rows", 0, "owner_email"]},
+                "action": "replace",
+                "entity_id": "ent-syn-maya",
+                "replacement_ref": "attr-syn-email-a12",
             }
         )
     with pytest.raises(DomainValidationError):
