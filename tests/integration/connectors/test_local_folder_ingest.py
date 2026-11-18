@@ -489,6 +489,8 @@ def test_exclusion_patterns_normalize_common_spellings(tmp_path: Path) -> None:
     assert normalize_exclusion_pattern("./secrets/**") == "secrets/**"
     assert normalize_exclusion_pattern("/secrets/**") == "secrets/**"
     assert normalize_exclusion_pattern("secrets/") == "secrets"
+    assert normalize_exclusion_pattern("secrets/**/") == "secrets/**"
+    assert normalize_exclusion_pattern("**/secrets") == "**/secrets"
     with pytest.raises(ValueError, match="backslash"):
         normalize_exclusion_pattern(r"secrets\**")
 
@@ -496,7 +498,7 @@ def test_exclusion_patterns_normalize_common_spellings(tmp_path: Path) -> None:
     _write(root / "secrets" / "token.txt", "not-a-real-secret\n")
     _write(root / "ok.txt", "fine\n")
 
-    for pattern in ("./secrets/**", "/secrets/**", "secrets/"):
+    for pattern in ("./secrets/**", "/secrets/**", "secrets/", "secrets/**/", "**/secrets"):
         result = ingest_local_folder(
             root,
             access_scope="project:syn-demo",
@@ -509,6 +511,49 @@ def test_exclusion_patterns_normalize_common_spellings(tmp_path: Path) -> None:
         assert all(
             payload.relative_package_path == "ok.txt" for payload in result.admitted_payloads
         ), pattern
+
+
+def test_any_depth_exclusion_matches_nested_and_root(tmp_path: Path) -> None:
+    """``**/secrets`` excludes secrets at the package root and nested paths."""
+    root = tmp_path / "pkg"
+    _write(root / "secrets" / "token.txt", "root-secret\n")
+    _write(root / "nested" / "secrets" / "token.txt", "nested-secret\n")
+    _write(root / "ok.txt", "fine\n")
+
+    result = ingest_local_folder(
+        root,
+        access_scope="project:syn-demo",
+        exclusions=("**/secrets",),
+    )
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["secrets"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["nested/secrets"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert "secrets/token.txt" not in by_path
+    assert "nested/secrets/token.txt" not in by_path
+    assert result.admitted_payloads and all(
+        payload.relative_package_path == "ok.txt" for payload in result.admitted_payloads
+    )
+
+
+def test_directory_open_nofollow_blocks_dir_symlink_swap(tmp_path: Path) -> None:
+    """Directory descent uses O_DIRECTORY|O_NOFOLLOW so a dir→symlink swap cannot escape."""
+    root = tmp_path / "pkg"
+    root.mkdir()
+    outside = tmp_path / "outside_dir"
+    outside.mkdir()
+    _write(outside / "secret.txt", "nope\n")
+    # Entry looks like a directory name but is an escaping symlink at scan time.
+    (root / "nested").symlink_to(outside)
+    _write(root / "ok.txt", "fine\n")
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["nested"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["nested"].reason is AdmissionReason.SYMLINK_ESCAPE
+    assert "nested/secret.txt" not in by_path
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert all(payload.relative_package_path == "ok.txt" for payload in result.admitted_payloads)
 
 
 def test_unreadable_excluded_tree_fails_closed_on_hard_links(tmp_path: Path) -> None:

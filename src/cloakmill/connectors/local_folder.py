@@ -24,6 +24,12 @@ from cloakmill.connectors.admission import (
 from cloakmill.connectors.inventory import InventoryEntry
 from cloakmill.domain.enums import CoverageState
 
+_DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+_FILE_OPEN_FLAGS = os.O_RDONLY | os.O_CLOEXEC
+if hasattr(os, "O_NOFOLLOW"):
+    _DIR_OPEN_FLAGS |= os.O_NOFOLLOW
+    _FILE_OPEN_FLAGS |= os.O_NOFOLLOW
+
 
 @dataclass(frozen=True, slots=True)
 class AdmittedPayload:
@@ -58,11 +64,12 @@ def normalize_exclusion_pattern(pattern: str) -> str:
     Grammar (after normalization):
     - ``name`` / ``path/seg`` — exact path or ancestor bare-name match
     - ``path/**`` — directory prefix match
+    - ``**/name`` — name at any depth, including the package root
     - ``*.ext`` / other fnmatch globs against the path and ancestors
 
-    Leading ``./`` and ``/``, and a lone trailing ``/``, are stripped so common
-    spellings such as ``./secrets/**``, ``/secrets/**``, and ``secrets/`` work.
-    Backslashes are rejected (they are not path separators in this dialect).
+    Leading ``./`` and ``/``, and any trailing ``/``, are stripped so spellings
+    such as ``./secrets/**``, ``/secrets/**``, ``secrets/``, and ``secrets/**/``
+    all work. Backslashes are rejected.
     """
     text = pattern.strip()
     if not text:
@@ -71,10 +78,15 @@ def normalize_exclusion_pattern(pattern: str) -> str:
         raise ValueError(f"exclusion pattern must not contain backslashes: {pattern!r}")
     while text.startswith("./"):
         text = text[2:]
-    text = text.lstrip("/")
-    if text.endswith("/") and not text.endswith("**/"):
-        text = text.rstrip("/")
-    if not text or text in {".", ".."}:
+    # Keep a leading **/ (any-depth) but strip a lone absolute slash.
+    if text.startswith("**/"):
+        rest = text[3:].lstrip("/")
+        text = f"**/{rest}" if rest else "**"
+    else:
+        text = text.lstrip("/")
+    # Always strip trailing slashes so secrets/**/ → secrets/**
+    text = text.rstrip("/")
+    if not text or text in {".", "..", "**"}:
         raise ValueError(f"exclusion pattern is empty after normalization: {pattern!r}")
     return text
 
@@ -97,21 +109,37 @@ def _path_and_ancestors(relative_path: str) -> tuple[str, ...]:
     return tuple("/".join(parts[:index]) for index in range(len(parts), 0, -1))
 
 
+def _pattern_match_forms(pattern: str) -> tuple[str, ...]:
+    """Return pattern forms to evaluate (expand leading ``**/`` to also match at root)."""
+    if pattern.startswith("**/"):
+        rest = pattern[3:]
+        return (pattern, rest) if rest else (pattern,)
+    return (pattern,)
+
+
+def _matches_one_pattern(candidate: str, pattern: str) -> bool:
+    if fnmatch.fnmatchcase(candidate, pattern):
+        return True
+    # Directory-prefix style exclusions such as "secrets/**".
+    if pattern.endswith("/**") and (
+        candidate == pattern[:-3] or candidate.startswith(pattern[:-2])
+    ):
+        return True
+    # Bare directory/file name excludes that path and everything beneath it.
+    if candidate == pattern or candidate.startswith(f"{pattern}/"):
+        return True
+    # Any-depth suffix: candidate ends with /pattern (for **/name expanded form).
+    return candidate.endswith(f"/{pattern}")
+
+
 def _matches_exclusion(relative_path: str, patterns: Sequence[str]) -> bool:
     """Match exclusions against the path and every ancestor (resolved or lexical)."""
     candidates = _path_and_ancestors(relative_path)
     for pattern in patterns:
-        for candidate in candidates:
-            if fnmatch.fnmatchcase(candidate, pattern):
-                return True
-            # Directory-prefix style exclusions such as "secrets/**".
-            if pattern.endswith("/**") and (
-                candidate == pattern[:-3] or candidate.startswith(pattern[:-2])
-            ):
-                return True
-            # Bare directory name excludes the directory and everything beneath it.
-            if candidate == pattern or candidate.startswith(f"{pattern}/"):
-                return True
+        for form in _pattern_match_forms(pattern):
+            for candidate in candidates:
+                if _matches_one_pattern(candidate, form):
+                    return True
     return False
 
 
@@ -150,141 +178,16 @@ def _entry(
     )
 
 
-def _is_under_root(path: Path, root: Path) -> bool:
-    try:
-        path.resolve(strict=False).relative_to(root)
-        return True
-    except (ValueError, OSError, RuntimeError):
-        return False
+def _join_relative(prefix: str, name: str) -> str:
+    return f"{prefix}/{name}" if prefix else name
 
 
-def _inode_identity(path: Path, *, follow_symlinks: bool = False) -> tuple[int, int] | None:
-    """Return ``(st_dev, st_ino)`` for hard-link / cycle tracking."""
-    try:
-        result = path.stat() if follow_symlinks else path.lstat()
-    except OSError:
-        return None
-    return (result.st_dev, result.st_ino)
-
-
-def _dir_identity(path: Path) -> tuple[int, int] | None:
-    return _inode_identity(path, follow_symlinks=True)
-
-
-def _collect_excluded_inodes(
-    root_path: Path,
-    exclusion_patterns: Sequence[str],
-) -> _ExcludedInodeScan:
-    """Walk the tree and record inodes for every excluded path and descendant.
-
-    Hard links outside an exclusion prefix share ``(st_dev, st_ino)`` with the
-    scoped-out file; collecting those identities closes the bypass.
-
-    If any directory under an exclusion cannot be enumerated, ``incomplete`` is
-    set so admission can fail closed for multiply-linked files.
-    """
-    if not exclusion_patterns:
-        return _ExcludedInodeScan(inodes=frozenset(), incomplete=False)
-
-    excluded: set[tuple[int, int]] = set()
-    visited_dirs: set[tuple[int, int]] = set()
-    incomplete = False
-
-    def record(path: Path) -> None:
-        identity = _inode_identity(path, follow_symlinks=False)
-        if identity is not None:
-            excluded.add(identity)
-        # Also record the followed target so hard links to symlink targets match.
-        if path.is_symlink():
-            followed = _inode_identity(path, follow_symlinks=True)
-            if followed is not None:
-                excluded.add(followed)
-
-    def walk(directory: Path, *, under_exclusion: bool) -> None:
-        nonlocal incomplete
-        dir_id = _inode_identity(directory, follow_symlinks=False)
-        if dir_id is None:
-            if under_exclusion or exclusion_patterns:
-                incomplete = True
-            return
-        if dir_id in visited_dirs:
-            return
-        visited_dirs.add(dir_id)
-
-        try:
-            children = sorted(directory.iterdir(), key=lambda item: item.name)
-        except OSError:
-            # Fail closed: missing excluded-tree inodes must not silently admit aliases.
-            incomplete = True
-            return
-
-        for child in children:
-            try:
-                raw_relative = child.relative_to(root_path).as_posix()
-            except ValueError:
-                continue
-
-            # Backslash is a legal POSIX filename character. Do not skip inode
-            # recording for those names — only admission/normalize rejects them.
-            has_backslash = "\\" in raw_relative or any(
-                "\\" in part for part in child.relative_to(root_path).parts
-            )
-            if has_backslash:
-                matched = under_exclusion or _matches_exclusion(raw_relative, exclusion_patterns)
-                if matched:
-                    record(child)
-                    if not child.is_symlink() and child.is_dir():
-                        walk(child, under_exclusion=True)
-                elif child.is_dir() and not child.is_symlink():
-                    walk(child, under_exclusion=False)
-                continue
-
-            try:
-                relative = normalize_relative_package_path(raw_relative)
-            except ValueError:
-                if under_exclusion:
-                    record(child)
-                    if not child.is_symlink() and child.is_dir():
-                        walk(child, under_exclusion=True)
-                continue
-
-            matched = under_exclusion or _matches_exclusion(relative, exclusion_patterns)
-            if matched:
-                record(child)
-                if child.is_symlink():
-                    continue
-                if child.is_dir():
-                    walk(child, under_exclusion=True)
-                continue
-
-            if child.is_dir() and not child.is_symlink():
-                walk(child, under_exclusion=False)
-
-    walk(root_path, under_exclusion=False)
-    return _ExcludedInodeScan(inodes=frozenset(excluded), incomplete=incomplete)
-
-
-def _open_regular_file_nofollow(
-    path: Path,
-) -> tuple[int, os.stat_result] | None:
-    """Open ``path`` without following symlinks; return ``(fd, fstat)`` or ``None``."""
-    flags = os.O_RDONLY | os.O_CLOEXEC
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    if nofollow:
-        flags |= nofollow
-    try:
-        fd = os.open(path, flags)
-    except OSError:
-        return None
+def _fstat_identity(fd: int) -> tuple[int, int] | None:
     try:
         info = os.fstat(fd)
     except OSError:
-        os.close(fd)
         return None
-    if not stat_module.S_ISREG(info.st_mode):
-        os.close(fd)
-        return None
-    return fd, info
+    return (info.st_dev, info.st_ino)
 
 
 def _read_fd(fd: int, size: int) -> bytes:
@@ -299,6 +202,118 @@ def _read_fd(fd: int, size: int) -> bytes:
     return b"".join(chunks)
 
 
+def _collect_excluded_inodes(
+    root_fd: int,
+    exclusion_patterns: Sequence[str],
+) -> _ExcludedInodeScan:
+    """Walk via dirfds and record inodes for every excluded path and descendant."""
+    if not exclusion_patterns:
+        return _ExcludedInodeScan(inodes=frozenset(), incomplete=False)
+
+    excluded: set[tuple[int, int]] = set()
+    visited_dirs: set[tuple[int, int]] = set()
+    incomplete = False
+
+    def record_fd(fd: int) -> None:
+        identity = _fstat_identity(fd)
+        if identity is not None:
+            excluded.add(identity)
+
+    def record_name(dir_fd: int, name: str) -> None:
+        try:
+            info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        except OSError:
+            nonlocal incomplete
+            incomplete = True
+            return
+        excluded.add((info.st_dev, info.st_ino))
+        if stat_module.S_ISLNK(info.st_mode):
+            try:
+                followed = os.stat(name, dir_fd=dir_fd, follow_symlinks=True)
+            except OSError:
+                return
+            excluded.add((followed.st_dev, followed.st_ino))
+
+    def walk(dir_fd: int, *, relative_prefix: str, under_exclusion: bool) -> None:
+        nonlocal incomplete
+        dir_id = _fstat_identity(dir_fd)
+        if dir_id is None:
+            incomplete = True
+            return
+        if dir_id in visited_dirs:
+            return
+        visited_dirs.add(dir_id)
+
+        try:
+            names = sorted(os.listdir(dir_fd))
+        except OSError:
+            incomplete = True
+            return
+
+        for name in names:
+            raw_relative = _join_relative(relative_prefix, name)
+            has_backslash = "\\" in name or "\\" in raw_relative
+
+            matched = under_exclusion
+            if not matched:
+                if has_backslash:
+                    matched = _matches_exclusion(raw_relative, exclusion_patterns)
+                else:
+                    try:
+                        relative = normalize_relative_package_path(raw_relative)
+                    except ValueError:
+                        continue
+                    matched = _matches_exclusion(relative, exclusion_patterns)
+
+            try:
+                info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+            except OSError:
+                if matched or under_exclusion:
+                    incomplete = True
+                continue
+
+            is_link = stat_module.S_ISLNK(info.st_mode)
+            is_dir = stat_module.S_ISDIR(info.st_mode)
+
+            if matched:
+                record_name(dir_fd, name)
+                if is_link:
+                    continue
+                if is_dir:
+                    try:
+                        child_fd = os.open(name, _DIR_OPEN_FLAGS, dir_fd=dir_fd)
+                    except OSError:
+                        incomplete = True
+                        continue
+                    try:
+                        walk(
+                            child_fd,
+                            relative_prefix=raw_relative,
+                            under_exclusion=True,
+                        )
+                    finally:
+                        os.close(child_fd)
+                continue
+
+            if is_dir and not is_link:
+                try:
+                    child_fd = os.open(name, _DIR_OPEN_FLAGS, dir_fd=dir_fd)
+                except OSError:
+                    incomplete = True
+                    continue
+                try:
+                    walk(
+                        child_fd,
+                        relative_prefix=raw_relative,
+                        under_exclusion=False,
+                    )
+                finally:
+                    os.close(child_fd)
+
+    walk(root_fd, relative_prefix="", under_exclusion=False)
+    return _ExcludedInodeScan(inodes=frozenset(excluded), incomplete=incomplete)
+
+
 def scan_local_folder(
     root: Path | str,
     *,
@@ -308,11 +323,10 @@ def scan_local_folder(
 ) -> LocalFolderScanResult:
     """Scan ``root`` with bounded recursion and admission gates.
 
-    ``access_scope`` is accepted for call-site clarity; artifact scoping is
-    applied later in the pipeline ingest step.
+    Directory descent and file reads use ``O_NOFOLLOW`` (and ``O_DIRECTORY`` for
+    dirs) so symlink swaps cannot escape the ingest root between check and use.
 
-    Exclusion patterns are normalized via :func:`normalize_exclusion_patterns`
-    (root-relative POSIX; leading ``./``/``/`` and trailing ``/`` stripped).
+    Exclusion patterns are normalized via :func:`normalize_exclusion_patterns`.
     """
     del access_scope  # used by pipeline; kept here for a stable connector signature
     limits = limits or AdmissionLimits()
@@ -324,170 +338,169 @@ def scan_local_folder(
     inventory: list[InventoryEntry] = []
     admitted: list[AdmittedPayload] = []
     visited_dirs: set[tuple[int, int]] = set()
-    exclusion_scan = _collect_excluded_inodes(root_path, exclusion_patterns)
-    excluded_inodes: set[tuple[int, int]] = set(exclusion_scan.inodes)
-    exclusion_scan_incomplete = exclusion_scan.incomplete
-    # Process-local HMAC key for opaque ids; never exported release-facing.
     id_key = secrets.token_bytes(32)
 
-    def visit(directory: Path, depth: int) -> None:
-        identity = _dir_identity(directory)
-        if identity is None:
-            rel = directory.relative_to(root_path).as_posix()
-            if rel and rel != ".":
-                inventory.append(
-                    _entry(
-                        relative_package_path=rel,
-                        disposition=AdmissionDisposition.QUARANTINED,
-                        reason=AdmissionReason.UNREADABLE,
-                        id_key=id_key,
-                    )
-                )
-            return
-        if identity in visited_dirs:
-            rel = directory.relative_to(root_path).as_posix()
-            if rel and rel != ".":
-                inventory.append(
-                    _entry(
-                        relative_package_path=rel,
-                        disposition=AdmissionDisposition.QUARANTINED,
-                        reason=AdmissionReason.SYMLINK_CYCLE,
-                        id_key=id_key,
-                    )
-                )
-            return
-        visited_dirs.add(identity)
+    try:
+        root_fd = os.open(root_path, _DIR_OPEN_FLAGS)
+    except OSError as exc:
+        raise NotADirectoryError(f"ingest root must be a directory: {root_path}") from exc
 
-        try:
-            children = sorted(directory.iterdir(), key=lambda item: item.name)
-        except OSError:
-            rel = directory.relative_to(root_path).as_posix()
-            if rel and rel != ".":
-                inventory.append(
-                    _entry(
-                        relative_package_path=rel,
-                        disposition=AdmissionDisposition.QUARANTINED,
-                        reason=AdmissionReason.UNREADABLE,
-                        id_key=id_key,
-                    )
-                )
-            return
+    try:
+        exclusion_scan = _collect_excluded_inodes(root_fd, exclusion_patterns)
+        excluded_inodes: set[tuple[int, int]] = set(exclusion_scan.inodes)
+        exclusion_scan_incomplete = exclusion_scan.incomplete
 
-        for child in children:
-            try:
-                raw_relative = child.relative_to(root_path).as_posix()
-            except ValueError:
-                inventory.append(
-                    _entry(
-                        relative_package_path=encode_unsafe_relative_path(child.name),
-                        disposition=AdmissionDisposition.QUARANTINED,
-                        reason=AdmissionReason.PATH_TRAVERSAL,
-                        id_key=id_key,
-                    )
-                )
-                continue
-
-            # Quarantine backslash filenames before any rewrite/normalization.
-            # Still record the inode when the path falls under an exclusion so a
-            # hard-link alias cannot admit the scoped-out content.
-            if "\\" in raw_relative or any(
-                "\\" in part for part in child.relative_to(root_path).parts
-            ):
-                if _matches_exclusion(raw_relative, exclusion_patterns):
-                    file_id = _inode_identity(child, follow_symlinks=False)
-                    if file_id is not None:
-                        excluded_inodes.add(file_id)
-                inventory.append(
-                    _entry(
-                        relative_package_path=encode_unsafe_relative_path(raw_relative),
-                        disposition=AdmissionDisposition.QUARANTINED,
-                        reason=AdmissionReason.PATH_TRAVERSAL,
-                        id_key=id_key,
-                    )
-                )
-                continue
-
-            try:
-                relative = normalize_relative_package_path(raw_relative)
-            except ValueError:
-                if _matches_exclusion(raw_relative, exclusion_patterns):
-                    file_id = _inode_identity(child, follow_symlinks=False)
-                    if file_id is not None:
-                        excluded_inodes.add(file_id)
-                inventory.append(
-                    _entry(
-                        relative_package_path=encode_unsafe_relative_path(raw_relative),
-                        disposition=AdmissionDisposition.QUARANTINED,
-                        reason=AdmissionReason.PATH_TRAVERSAL,
-                        id_key=id_key,
-                    )
-                )
-                continue
-
-            if _matches_exclusion(relative, exclusion_patterns):
-                file_id = _inode_identity(child, follow_symlinks=False)
-                if file_id is not None:
-                    excluded_inodes.add(file_id)
-                inventory.append(
-                    _entry(
-                        relative_package_path=relative,
-                        disposition=AdmissionDisposition.EXCLUDED,
-                        reason=AdmissionReason.EXPLICIT_EXCLUSION,
-                        id_key=id_key,
-                    )
-                )
-                continue
-
-            if depth > limits.max_depth:
-                inventory.append(
-                    _entry(
-                        relative_package_path=relative,
-                        disposition=AdmissionDisposition.QUARANTINED,
-                        reason=AdmissionReason.MAX_DEPTH_EXCEEDED,
-                        id_key=id_key,
-                    )
-                )
-                continue
-
-            if child.is_symlink():
-                # strict=True fails closed on loops/dangling links across 3.12 and 3.13.
-                try:
-                    resolved_target = child.resolve(strict=True)
-                except (OSError, RuntimeError):
+        def visit(dir_fd: int, *, relative_prefix: str, depth: int) -> None:
+            identity = _fstat_identity(dir_fd)
+            if identity is None:
+                if relative_prefix:
                     inventory.append(
                         _entry(
-                            relative_package_path=relative,
+                            relative_package_path=relative_prefix,
+                            disposition=AdmissionDisposition.QUARANTINED,
+                            reason=AdmissionReason.UNREADABLE,
+                            id_key=id_key,
+                        )
+                    )
+                return
+            if identity in visited_dirs:
+                if relative_prefix:
+                    inventory.append(
+                        _entry(
+                            relative_package_path=relative_prefix,
                             disposition=AdmissionDisposition.QUARANTINED,
                             reason=AdmissionReason.SYMLINK_CYCLE,
                             id_key=id_key,
                         )
                     )
-                    continue
-                if not _is_under_root(resolved_target, root_path):
+                return
+            visited_dirs.add(identity)
+
+            try:
+                names = sorted(os.listdir(dir_fd))
+            except OSError:
+                if relative_prefix:
                     inventory.append(
                         _entry(
-                            relative_package_path=relative,
+                            relative_package_path=relative_prefix,
                             disposition=AdmissionDisposition.QUARANTINED,
-                            reason=AdmissionReason.SYMLINK_ESCAPE,
+                            reason=AdmissionReason.UNREADABLE,
+                            id_key=id_key,
+                        )
+                    )
+                return
+
+            for name in names:
+                raw_relative = _join_relative(relative_prefix, name)
+
+                if "\\" in name or "\\" in raw_relative:
+                    if _matches_exclusion(raw_relative, exclusion_patterns):
+                        try:
+                            info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                            excluded_inodes.add((info.st_dev, info.st_ino))
+                        except OSError:
+                            pass
+                    inventory.append(
+                        _entry(
+                            relative_package_path=encode_unsafe_relative_path(raw_relative),
+                            disposition=AdmissionDisposition.QUARANTINED,
+                            reason=AdmissionReason.PATH_TRAVERSAL,
                             id_key=id_key,
                         )
                     )
                     continue
+
                 try:
-                    target_rel_raw = resolved_target.relative_to(root_path).as_posix()
+                    relative = normalize_relative_package_path(raw_relative)
                 except ValueError:
+                    if _matches_exclusion(raw_relative, exclusion_patterns):
+                        try:
+                            info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                            excluded_inodes.add((info.st_dev, info.st_ino))
+                        except OSError:
+                            pass
                     inventory.append(
                         _entry(
-                            relative_package_path=relative,
+                            relative_package_path=encode_unsafe_relative_path(raw_relative),
                             disposition=AdmissionDisposition.QUARANTINED,
-                            reason=AdmissionReason.SYMLINK_ESCAPE,
+                            reason=AdmissionReason.PATH_TRAVERSAL,
                             id_key=id_key,
                         )
                     )
                     continue
-                if target_rel_raw not in ("", "."):
+
+                try:
+                    info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                except OSError:
+                    inventory.append(
+                        _entry(
+                            relative_package_path=relative,
+                            disposition=AdmissionDisposition.QUARANTINED,
+                            reason=AdmissionReason.UNREADABLE,
+                            id_key=id_key,
+                        )
+                    )
+                    continue
+
+                is_link = stat_module.S_ISLNK(info.st_mode)
+                is_dir = stat_module.S_ISDIR(info.st_mode)
+                is_reg = stat_module.S_ISREG(info.st_mode)
+
+                if _matches_exclusion(relative, exclusion_patterns):
+                    excluded_inodes.add((info.st_dev, info.st_ino))
+                    inventory.append(
+                        _entry(
+                            relative_package_path=relative,
+                            disposition=AdmissionDisposition.EXCLUDED,
+                            reason=AdmissionReason.EXPLICIT_EXCLUSION,
+                            id_key=id_key,
+                        )
+                    )
+                    continue
+
+                if depth > limits.max_depth:
+                    inventory.append(
+                        _entry(
+                            relative_package_path=relative,
+                            disposition=AdmissionDisposition.QUARANTINED,
+                            reason=AdmissionReason.MAX_DEPTH_EXCEEDED,
+                            id_key=id_key,
+                        )
+                    )
+                    continue
+
+                if is_link:
+                    # Resolve for classification only; never descend or read through it.
+                    link_path = root_path.joinpath(*PurePosixPath(relative).parts)
                     try:
-                        target_relative = normalize_relative_package_path(target_rel_raw)
+                        resolved_target = link_path.resolve(strict=True)
+                    except (OSError, RuntimeError):
+                        inventory.append(
+                            _entry(
+                                relative_package_path=relative,
+                                disposition=AdmissionDisposition.QUARANTINED,
+                                reason=AdmissionReason.SYMLINK_CYCLE,
+                                id_key=id_key,
+                            )
+                        )
+                        continue
+                    try:
+                        resolved_target.relative_to(root_path)
+                        under_root = True
+                    except ValueError:
+                        under_root = False
+                    if not under_root:
+                        inventory.append(
+                            _entry(
+                                relative_package_path=relative,
+                                disposition=AdmissionDisposition.QUARANTINED,
+                                reason=AdmissionReason.SYMLINK_ESCAPE,
+                                id_key=id_key,
+                            )
+                        )
+                        continue
+                    try:
+                        target_rel_raw = resolved_target.relative_to(root_path).as_posix()
                     except ValueError:
                         inventory.append(
                             _entry(
@@ -498,10 +511,121 @@ def scan_local_folder(
                             )
                         )
                         continue
-                    if _matches_exclusion(target_relative, exclusion_patterns):
-                        target_identity = _inode_identity(resolved_target, follow_symlinks=False)
-                        if target_identity is not None:
-                            excluded_inodes.add(target_identity)
+                    if target_rel_raw not in ("", "."):
+                        try:
+                            target_relative = normalize_relative_package_path(target_rel_raw)
+                        except ValueError:
+                            inventory.append(
+                                _entry(
+                                    relative_package_path=relative,
+                                    disposition=AdmissionDisposition.QUARANTINED,
+                                    reason=AdmissionReason.SYMLINK_ESCAPE,
+                                    id_key=id_key,
+                                )
+                            )
+                            continue
+                        if _matches_exclusion(target_relative, exclusion_patterns):
+                            try:
+                                target_stat = resolved_target.stat()
+                                excluded_inodes.add((target_stat.st_dev, target_stat.st_ino))
+                            except OSError:
+                                pass
+                            inventory.append(
+                                _entry(
+                                    relative_package_path=relative,
+                                    disposition=AdmissionDisposition.EXCLUDED,
+                                    reason=AdmissionReason.EXPLICIT_EXCLUSION,
+                                    id_key=id_key,
+                                )
+                            )
+                            continue
+                    inventory.append(
+                        _entry(
+                            relative_package_path=relative,
+                            disposition=AdmissionDisposition.QUARANTINED,
+                            reason=(
+                                AdmissionReason.DIRECTORY_SYMLINK
+                                if resolved_target.is_dir()
+                                else AdmissionReason.FILE_SYMLINK
+                            ),
+                            id_key=id_key,
+                        )
+                    )
+                    continue
+
+                if is_dir:
+                    try:
+                        child_fd = os.open(name, _DIR_OPEN_FLAGS, dir_fd=dir_fd)
+                    except OSError:
+                        # Became a symlink or vanished between lstat and open.
+                        inventory.append(
+                            _entry(
+                                relative_package_path=relative,
+                                disposition=AdmissionDisposition.QUARANTINED,
+                                reason=AdmissionReason.DIRECTORY_SYMLINK,
+                                id_key=id_key,
+                            )
+                        )
+                        continue
+                    try:
+                        visit(child_fd, relative_prefix=relative, depth=depth + 1)
+                    finally:
+                        os.close(child_fd)
+                    continue
+
+                if not is_reg:
+                    inventory.append(
+                        _entry(
+                            relative_package_path=relative,
+                            disposition=AdmissionDisposition.QUARANTINED,
+                            reason=AdmissionReason.NOT_A_FILE,
+                            id_key=id_key,
+                        )
+                    )
+                    continue
+
+                if not suffix_is_allowed(relative, limits):
+                    inventory.append(
+                        _entry(
+                            relative_package_path=relative,
+                            disposition=AdmissionDisposition.QUARANTINED,
+                            reason=AdmissionReason.UNSUPPORTED_TYPE,
+                            id_key=id_key,
+                            media_type=media_type_for_relative_path(relative),
+                        )
+                    )
+                    continue
+
+                try:
+                    fd = os.open(name, _FILE_OPEN_FLAGS, dir_fd=dir_fd)
+                except OSError:
+                    inventory.append(
+                        _entry(
+                            relative_package_path=relative,
+                            disposition=AdmissionDisposition.QUARANTINED,
+                            reason=AdmissionReason.UNREADABLE,
+                            id_key=id_key,
+                            media_type=media_type_for_relative_path(relative),
+                        )
+                    )
+                    continue
+
+                try:
+                    opened = os.fstat(fd)
+                    if not stat_module.S_ISREG(opened.st_mode):
+                        inventory.append(
+                            _entry(
+                                relative_package_path=relative,
+                                disposition=AdmissionDisposition.QUARANTINED,
+                                reason=AdmissionReason.NOT_A_FILE,
+                                id_key=id_key,
+                                media_type=media_type_for_relative_path(relative),
+                            )
+                        )
+                        continue
+
+                    file_identity = (opened.st_dev, opened.st_ino)
+                    if file_identity in excluded_inodes:
                         inventory.append(
                             _entry(
                                 relative_package_path=relative,
@@ -511,139 +635,74 @@ def scan_local_folder(
                             )
                         )
                         continue
-                # Inventory symlinks as quarantined; never open/read via path
-                # re-resolution (TOCTOU). File bytes are only admitted through
-                # O_NOFOLLOW opens of non-symlink directory entries.
-                inventory.append(
-                    _entry(
-                        relative_package_path=relative,
-                        disposition=AdmissionDisposition.QUARANTINED,
-                        reason=(
-                            AdmissionReason.DIRECTORY_SYMLINK
-                            if resolved_target.is_dir()
-                            else AdmissionReason.FILE_SYMLINK
-                        ),
-                        id_key=id_key,
-                    )
-                )
-                continue
-
-            if child.is_dir():
-                visit(child, depth + 1)
-                continue
-
-            if not suffix_is_allowed(relative, limits):
-                inventory.append(
-                    _entry(
-                        relative_package_path=relative,
-                        disposition=AdmissionDisposition.QUARANTINED,
-                        reason=AdmissionReason.UNSUPPORTED_TYPE,
-                        id_key=id_key,
-                        media_type=media_type_for_relative_path(relative),
-                    )
-                )
-                continue
-
-            # Pin the inode with O_NOFOLLOW so type/size/exclusion/read share one fd.
-            opened = _open_regular_file_nofollow(child)
-            if opened is None:
-                # Symlink swap after listing, non-regular, or unreadable — fail closed.
-                if child.is_symlink():
-                    open_reason = AdmissionReason.FILE_SYMLINK
-                elif child.exists() and not child.is_file():
-                    open_reason = AdmissionReason.NOT_A_FILE
-                else:
-                    open_reason = AdmissionReason.UNREADABLE
-                inventory.append(
-                    _entry(
-                        relative_package_path=relative,
-                        disposition=AdmissionDisposition.QUARANTINED,
-                        reason=open_reason,
-                        id_key=id_key,
-                        media_type=media_type_for_relative_path(relative),
-                    )
-                )
-                continue
-
-            fd, info = opened
-            try:
-                file_identity = (info.st_dev, info.st_ino)
-                if file_identity in excluded_inodes:
-                    inventory.append(
-                        _entry(
-                            relative_package_path=relative,
-                            disposition=AdmissionDisposition.EXCLUDED,
-                            reason=AdmissionReason.EXPLICIT_EXCLUSION,
-                            id_key=id_key,
+                    if exclusion_scan_incomplete and opened.st_nlink > 1:
+                        inventory.append(
+                            _entry(
+                                relative_package_path=relative,
+                                disposition=AdmissionDisposition.EXCLUDED,
+                                reason=AdmissionReason.EXPLICIT_EXCLUSION,
+                                id_key=id_key,
+                            )
                         )
-                    )
-                    continue
-                # Incomplete exclusion enumeration: refuse multiply-linked files.
-                if exclusion_scan_incomplete and info.st_nlink > 1:
-                    inventory.append(
-                        _entry(
-                            relative_package_path=relative,
-                            disposition=AdmissionDisposition.EXCLUDED,
-                            reason=AdmissionReason.EXPLICIT_EXCLUSION,
-                            id_key=id_key,
-                        )
-                    )
-                    continue
+                        continue
 
-                size = info.st_size
-                if size > limits.max_file_bytes:
-                    inventory.append(
-                        _entry(
-                            relative_package_path=relative,
-                            disposition=AdmissionDisposition.QUARANTINED,
-                            reason=AdmissionReason.OVERSIZED,
-                            id_key=id_key,
-                            media_type=media_type_for_relative_path(relative),
-                            byte_size=size,
+                    size = opened.st_size
+                    if size > limits.max_file_bytes:
+                        inventory.append(
+                            _entry(
+                                relative_package_path=relative,
+                                disposition=AdmissionDisposition.QUARANTINED,
+                                reason=AdmissionReason.OVERSIZED,
+                                id_key=id_key,
+                                media_type=media_type_for_relative_path(relative),
+                                byte_size=size,
+                            )
                         )
-                    )
-                    continue
+                        continue
 
-                try:
-                    payload = _read_fd(fd, size)
-                except OSError:
-                    inventory.append(
-                        _entry(
-                            relative_package_path=relative,
-                            disposition=AdmissionDisposition.QUARANTINED,
-                            reason=AdmissionReason.UNREADABLE,
-                            id_key=id_key,
-                            media_type=media_type_for_relative_path(relative),
-                            byte_size=size,
+                    try:
+                        payload = _read_fd(fd, size)
+                    except OSError:
+                        inventory.append(
+                            _entry(
+                                relative_package_path=relative,
+                                disposition=AdmissionDisposition.QUARANTINED,
+                                reason=AdmissionReason.UNREADABLE,
+                                id_key=id_key,
+                                media_type=media_type_for_relative_path(relative),
+                                byte_size=size,
+                            )
                         )
-                    )
-                    continue
-            finally:
-                os.close(fd)
+                        continue
+                finally:
+                    os.close(fd)
 
-            digest = sha256_digest(payload)
-            media_type = media_type_for_relative_path(relative) or "application/octet-stream"
-            entry = _entry(
-                relative_package_path=relative,
-                disposition=AdmissionDisposition.ADMITTED,
-                reason=AdmissionReason.OK,
-                id_key=id_key,
-                media_type=media_type,
-                byte_size=len(payload),
-                digest=digest,
-            )
-            inventory.append(entry)
-            admitted.append(
-                AdmittedPayload(
-                    opaque_id=entry.opaque_id,
-                    relative_package_path=entry.relative_package_path,
+                digest = sha256_digest(payload)
+                media_type = media_type_for_relative_path(relative) or "application/octet-stream"
+                entry = _entry(
+                    relative_package_path=relative,
+                    disposition=AdmissionDisposition.ADMITTED,
+                    reason=AdmissionReason.OK,
+                    id_key=id_key,
                     media_type=media_type,
+                    byte_size=len(payload),
                     digest=digest,
-                    payload=payload,
                 )
-            )
+                inventory.append(entry)
+                admitted.append(
+                    AdmittedPayload(
+                        opaque_id=entry.opaque_id,
+                        relative_package_path=entry.relative_package_path,
+                        media_type=media_type,
+                        digest=digest,
+                        payload=payload,
+                    )
+                )
 
-    visit(root_path, depth=0)
+        visit(root_fd, relative_prefix="", depth=0)
+    finally:
+        os.close(root_fd)
+
     inventory.sort(key=lambda item: item.relative_package_path)
     admitted.sort(key=lambda item: item.relative_package_path)
     return LocalFolderScanResult(inventory=tuple(inventory), admitted=tuple(admitted))
