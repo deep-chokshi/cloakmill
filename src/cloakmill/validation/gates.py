@@ -11,6 +11,7 @@ from cloakmill.validation.coverage import (
     CoverageLedger,
     compare_coverage,
     observed_ledger_from_candidates,
+    verify_observed_ledger,
 )
 from cloakmill.validation.findings import (
     Finding,
@@ -27,7 +28,12 @@ VALIDATOR_VERSION = "validation-gates-v1"
 
 @dataclass(frozen=True, slots=True)
 class ReleaseCandidate:
-    """Candidate dataset presented to independent validation."""
+    """Candidate dataset presented to independent validation.
+
+    ``observed_coverage``, when provided, is verified against a ledger derived
+    from candidate artifacts. Divergent caller-supplied ledgers cannot vacate
+    coverage gates.
+    """
 
     artifacts: tuple[CandidateArtifact, ...]
     expected_coverage: CoverageLedger
@@ -44,22 +50,28 @@ def validate_release_candidate(
     """Run coverage, privacy, and structure gates; return pass/block report.
 
     Validation rejects writer output independently: privacy uses a separate
-    discovery engine instance, structure reparses bytes, and coverage compares
-    ledgers rather than trusting the transform planner.
+    discovery engine instance, structure reparses bytes, and coverage is always
+    derived from candidate artifacts (caller-supplied ledgers are verified).
     """
     structure_ctx = structure if structure is not None else StructureContext()
-    observed = candidate.observed_coverage
-    if observed is None:
-        observed = observed_ledger_from_candidates(
-            expected=candidate.expected_coverage,
-            candidates=candidate.artifacts,
+    derived = observed_ledger_from_candidates(
+        expected=candidate.expected_coverage,
+        candidates=candidate.artifacts,
+    )
+    tamper_findings: tuple[Finding, ...] = ()
+    if candidate.observed_coverage is not None:
+        tamper_findings = verify_observed_ledger(
+            claimed=candidate.observed_coverage,
+            derived=derived,
         )
-
+    # Always compare against the derived ledger, never a writer-supplied one alone.
     coverage_findings = compare_coverage(
         expected=candidate.expected_coverage,
-        observed=observed,
+        observed=derived,
         candidate_artifacts=candidate.artifacts,
     )
+    coverage_findings = (*tamper_findings, *coverage_findings)
+
     privacy_findings = check_privacy(
         candidates=candidate.artifacts,
         context=privacy,

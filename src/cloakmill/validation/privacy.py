@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from cloakmill.detection.engine import DiscoveryEngine, PartInput
+from cloakmill.detection.entity_types import KNOWN_RULE_ENTITY_TYPES
 from cloakmill.detection.recognizers import build_default_catalog
 from cloakmill.domain.locators import TextOffsetLocator
 from cloakmill.validation.coverage import CandidateArtifact
@@ -14,6 +16,7 @@ from cloakmill.validation.findings import (
     CODE_PRIVACY_CANARY_DETECTED,
     CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
     CODE_PRIVACY_UNEXPECTED_IDENTIFIER,
+    CODE_PRIVACY_UNSUPPORTED_KIND,
     Finding,
     GateKind,
 )
@@ -30,6 +33,7 @@ class KnownSourceIdentifier:
     """Private-boundary known source identifier used only for residual checks.
 
     Never log or serialize ``normalized_value``. Findings reference ``opaque_id``.
+    ``kind`` must match a catalog recognizer entity type or validation fails closed.
     """
 
     opaque_id: str
@@ -68,6 +72,11 @@ class PrivacyContext:
         )
 
 
+def normalize_literal(value: str) -> str:
+    """Normalize literals for residual/canary comparison (NFC + casefold)."""
+    return unicodedata.normalize("NFC", value.strip()).casefold()
+
+
 def check_privacy(
     *,
     candidates: Iterable[CandidateArtifact],
@@ -77,16 +86,33 @@ def check_privacy(
     """Run independent residual, canary, and unexpected-identifier checks."""
     findings: list[Finding] = []
     discovery = engine if engine is not None else DiscoveryEngine(build_default_catalog())
-    known_by_value = {item.normalized_value: item for item in context.known_sources}
-    canary_by_token = {item.token: item for item in context.canaries}
-    allowed = context.allowed_synthetics
+
+    # Fail closed when a known-source kind has no recognizer backstop.
+    for source in context.known_sources:
+        if source.kind not in KNOWN_RULE_ENTITY_TYPES:
+            findings.append(
+                _privacy_finding(
+                    code=CODE_PRIVACY_UNSUPPORTED_KIND,
+                    artifact_version_id=None,
+                    detail_seed=source.opaque_id,
+                    subject_extra=source.opaque_id,
+                )
+            )
+
+    known_by_value = {
+        normalize_literal(item.normalized_value): item
+        for item in context.known_sources
+        if item.normalized_value
+    }
+    canary_by_token = {
+        normalize_literal(item.token): item for item in context.canaries if item.token
+    }
+    allowed = frozenset(normalize_literal(value) for value in context.allowed_synthetics if value)
 
     for artifact in candidates:
-        if artifact.excluded:
-            continue
+        # Excluded artifacts with payloads are still scanned for residuals/canaries.
+        # Coverage separately requires empty payloads on excluded candidates.
         payload_text = _decode_payload(artifact.payload)
-
-        # Direct known-source and canary scans over the full payload.
         findings.extend(
             _scan_literals(
                 artifact_version_id=artifact.artifact_version_id,
@@ -96,12 +122,32 @@ def check_privacy(
             )
         )
 
+        if artifact.excluded and not artifact.payload:
+            continue
+
         # Malformed candidates must not abort validation; structure gate owns
-        # CODE_STRUCTURE_REPARSE_FAILED. Continue literal/canary checks above.
+        # CODE_STRUCTURE_REPARSE_FAILED. Literal/canary scan above already ran.
         try:
             surfaces = iter_candidate_surfaces(artifact)
         except ValidationInputError:
             continue
+
+        # Post-deserialization surface scan catches JSON escapes etc.
+        for surface in surfaces:
+            findings.extend(
+                _scan_literals(
+                    artifact_version_id=artifact.artifact_version_id,
+                    haystack=surface.content,
+                    known_by_value=known_by_value,
+                    canary_by_token=canary_by_token,
+                )
+            )
+
+        if artifact.excluded:
+            # Do not run unexpected-identifier rules on excluded artifacts;
+            # residual/canary literal scans above still apply.
+            continue
+
         findings.extend(
             _independent_rule_scan(
                 surfaces=surfaces,
@@ -143,8 +189,9 @@ def _independent_rule_scan(
             matched = content
         if not matched:
             continue
-        if matched in known_by_value:
-            source = known_by_value[matched]
+        normalized = normalize_literal(matched)
+        if normalized in known_by_value:
+            source = known_by_value[normalized]
             findings.append(
                 _privacy_finding(
                     code=CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
@@ -154,8 +201,8 @@ def _independent_rule_scan(
                 )
             )
             continue
-        if matched in canary_by_token:
-            canary = canary_by_token[matched]
+        if normalized in canary_by_token:
+            canary = canary_by_token[normalized]
             findings.append(
                 _privacy_finding(
                     code=CODE_PRIVACY_CANARY_DETECTED,
@@ -165,7 +212,7 @@ def _independent_rule_scan(
                 )
             )
             continue
-        if matched not in allowed:
+        if normalized not in allowed:
             findings.append(
                 _privacy_finding(
                     code=CODE_PRIVACY_UNEXPECTED_IDENTIFIER,
@@ -185,8 +232,9 @@ def _scan_literals(
     canary_by_token: dict[str, SeededCanary],
 ) -> list[Finding]:
     findings: list[Finding] = []
+    normalized_haystack = normalize_literal(haystack)
     for value, source in known_by_value.items():
-        if value and value in haystack:
+        if value and value in normalized_haystack:
             findings.append(
                 _privacy_finding(
                     code=CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
@@ -196,7 +244,7 @@ def _scan_literals(
                 )
             )
     for token, canary in canary_by_token.items():
-        if token and token in haystack:
+        if token and token in normalized_haystack:
             findings.append(
                 _privacy_finding(
                     code=CODE_PRIVACY_CANARY_DETECTED,
@@ -211,12 +259,13 @@ def _scan_literals(
 def _privacy_finding(
     *,
     code: str,
-    artifact_version_id: str,
+    artifact_version_id: str | None,
     detail_seed: str,
     subject_extra: str,
 ) -> Finding:
+    artifact_key = artifact_version_id or "context"
     subject = subject_ref_for(
-        artifact_version_id=artifact_version_id,
+        artifact_version_id=artifact_key,
         surface_key=subject_extra,
     )
     return Finding(

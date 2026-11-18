@@ -6,15 +6,18 @@ from cloakmill.validation.coverage import (
     CoverageSurfaceRef,
     compare_coverage,
     observed_ledger_from_candidates,
+    verify_observed_ledger,
 )
 from cloakmill.validation.errors import ValidationError, ValidationInputError
 from cloakmill.validation.findings import (
     CODE_COVERAGE_EXCLUDED_LEAKED,
     CODE_COVERAGE_GAP,
+    CODE_COVERAGE_OBSERVED_TAMPER,
     CODE_COVERAGE_STATE_MISMATCH,
     CODE_PRIVACY_CANARY_DETECTED,
     CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
     CODE_PRIVACY_UNEXPECTED_IDENTIFIER,
+    CODE_PRIVACY_UNSUPPORTED_KIND,
     CODE_STRUCTURE_JOIN_MISMATCH,
     CODE_STRUCTURE_REPARSE_FAILED,
     CODE_STRUCTURE_SCHEMA_MISMATCH,
@@ -36,6 +39,7 @@ from cloakmill.validation.privacy import (
     PrivacyContext,
     SeededCanary,
     check_privacy,
+    normalize_literal,
 )
 from cloakmill.validation.structure import (
     JoinExpectation,
@@ -47,10 +51,12 @@ from cloakmill.validation.structure import (
 __all__ = [
     "CODE_COVERAGE_EXCLUDED_LEAKED",
     "CODE_COVERAGE_GAP",
+    "CODE_COVERAGE_OBSERVED_TAMPER",
     "CODE_COVERAGE_STATE_MISMATCH",
     "CODE_PRIVACY_CANARY_DETECTED",
     "CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE",
     "CODE_PRIVACY_UNEXPECTED_IDENTIFIER",
+    "CODE_PRIVACY_UNSUPPORTED_KIND",
     "CODE_STRUCTURE_JOIN_MISMATCH",
     "CODE_STRUCTURE_REPARSE_FAILED",
     "CODE_STRUCTURE_SCHEMA_MISMATCH",
@@ -76,7 +82,9 @@ __all__ = [
     "check_privacy",
     "check_structure",
     "compare_coverage",
+    "normalize_literal",
     "observed_ledger_from_candidates",
     "sensitive_values_for_leak_checks",
     "validate_release_candidate",
+    "verify_observed_ledger",
 ]
