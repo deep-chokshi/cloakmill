@@ -8,7 +8,11 @@ import pytest
 
 from cloakmill.domain import EntityKind, NamespaceKeyRef
 from cloakmill.domain.enums import AnchorKind
-from cloakmill.domain.mapping import MappingAssignment
+from cloakmill.domain.mapping import (
+    MappingAssignment,
+    MappingSnapshot,
+    compute_mapping_snapshot_commitment,
+)
 from cloakmill.identity import (
     AcceptedEntity,
     AcceptedEntityGraph,
@@ -178,9 +182,9 @@ def test_freeze_is_immutable() -> None:
     assert_frozen_immutable(bundle)
 
     store = FrozenMappingStore()
-    store.put(bundle)
+    store.put(bundle, namespace_secret=key.key_bytes)
     # Equal re-put is idempotent.
-    assert store.put(bundle) is bundle
+    assert store.put(bundle, namespace_secret=key.key_bytes) is bundle
 
     tampered = SyntheticProfile(
         opaque_id=bundle.profiles[0].opaque_id,
@@ -200,7 +204,53 @@ def test_freeze_is_immutable() -> None:
         profiles=(tampered,),
     )
     with pytest.raises(FrozenMappingError):
-        store.put(mutated)
+        store.put(mutated, namespace_secret=key.key_bytes)
+
+
+def test_store_put_rejects_forged_hmac_without_namespace_secret() -> None:
+    """Structure-valid forged snapshots must not enter the frozen store."""
+    scope = _scope()
+    key = _key(scope)
+    bundle = freeze_mapping(
+        NamespaceScopedProfileAssigner().assign(
+            graph=_graph(_person("ent-maya"), scope=scope),
+            namespace=scope,
+            key_material=key,
+            snapshot_version="map.v1",
+        )
+    )
+    forged_assignments = (
+        MappingAssignment(entity_id="ent-maya", profile_id=bundle.profiles[0].opaque_id),
+    )
+    forged_id, forged_digest = compute_mapping_snapshot_commitment(
+        snapshot_version=bundle.snapshot.snapshot_version,
+        namespace_id=bundle.snapshot.namespace_id,
+        entity_graph_version_id=bundle.snapshot.entity_graph_version_id,
+        policy_version=bundle.snapshot.policy_version,
+        namespace_key_ref=bundle.snapshot.namespace_key_ref,
+        assignments=forged_assignments,
+        namespace_secret=b"attacker-chosen-secret",
+    )
+    forged_snapshot = MappingSnapshot(
+        opaque_id=forged_id,
+        snapshot_version=bundle.snapshot.snapshot_version,
+        namespace_id=bundle.snapshot.namespace_id,
+        entity_graph_version_id=bundle.snapshot.entity_graph_version_id,
+        policy_version=bundle.snapshot.policy_version,
+        namespace_key_ref=bundle.snapshot.namespace_key_ref,
+        private_integrity_digest=forged_digest,
+        assignments=forged_assignments,
+    )
+    from cloakmill.identity.freeze import FrozenMappingBundle
+
+    forged_bundle = FrozenMappingBundle(
+        snapshot=forged_snapshot,
+        graph_version=bundle.graph_version,
+        profiles=bundle.profiles,
+    )
+    store = FrozenMappingStore()
+    with pytest.raises(FrozenMappingError, match="integrity authentication"):
+        store.put(forged_bundle, namespace_secret=key.key_bytes)
 
 
 def test_incremental_run_preserves_prior_assignments() -> None:
