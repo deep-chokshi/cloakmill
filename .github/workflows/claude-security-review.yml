@@ -34,6 +34,9 @@ jobs:
           # Scan every push. Without this, a PR is scanned once and a failed first
           # scan blocks later ones. Findings already posted are not repeated.
           run-every-commit: true
+          # Deterministic synthetic eval corpora / held-out labels are large and not
+          # executable product code; attaching them overflows the security-scan prompt.
+          exclude-directories: examples/synthetic/corpora,tests/fixtures/eval
 
       # The action posts nothing once a PR has any security comment, so keep one comment
       # up to date with the latest scan.

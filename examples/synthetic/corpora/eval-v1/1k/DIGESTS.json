@@ -1,0 +1,12 @@
+{
+  "files": {
+    "expected/expected_identity_links.jsonl": "43886966bc1869c45da2c4d862ad4363693bc2f04be379a8eb3c5cd262efcee8",
+    "expected/expected_observations.jsonl": "3dbc9ae50f992ff07be526576ee2aeb3e82cd328315adc18464eccd744e9975b",
+    "manifest.json": "50476680fb16c9e515635199bd88bf325c9470d9f69dcbc3478078288208a71f",
+    "raw/contacts.csv": "ef7267cf80ea25ef9ea503eedd0fe32998bfbb157e672122bdb84a3ca9c70db0",
+    "raw/messages.json": "603160a5703ce41c3bf4b68c20959209e9ff0f646049ec5ce9ac76988e0f9ea6",
+    "raw/notes.txt": "321963cf3df0c8b0c8efe49f0cff7fcfb195d0a569d7be55118175b46dd94911"
+  },
+  "schema_version": "provisional-f01-v1",
+  "source_version": "eval-v1-1k"
+}

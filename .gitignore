@@ -47,6 +47,9 @@ service-account*.json
 *.safetensors
 *.gguf
 
+# Regenerable large held-out expectations (digests committed; regenerate via scripts)
+/tests/fixtures/eval/eval-v1/10k/expected_observations.jsonl
+
 # Temporary visual previews
 /work/
 
