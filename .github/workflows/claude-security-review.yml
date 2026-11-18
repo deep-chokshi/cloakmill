@@ -4,6 +4,16 @@ name: Claude Security Review
 
 on:
   pull_request:
+  # Fallback when GitHub drops pull_request workflow delivery for a stacked PR
+  # after force-pushes (PR #33 after 4ed10b9: 0 Actions runs while app checks
+  # still attached). Push events still enqueue for the head branch.
+  push:
+    branches:
+      - "cursor/**"
+
+concurrency:
+  group: claude-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   pull-requests: write # Needed for leaving PR comments
@@ -11,10 +21,14 @@ permissions:
 
 jobs:
   security:
-    # Dependabot and fork runs get no repository secrets, so the review cannot run.
+    # Dependabot and fork PR runs get no repository secrets, so the review cannot run.
+    # On push, skip the pull_request head-repo check (there is no PR payload).
     if: >-
       github.actor != 'dependabot[bot]' &&
-      github.event.pull_request.head.repo.full_name == github.repository
+      (
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,12 +54,21 @@ jobs:
       - name: Post the latest findings on the pull request
         env:
           GH_TOKEN: ${{ github.token }}
-          CLOAKMILL_PR_NUMBER: ${{ github.event.pull_request.number }}
-          CLOAKMILL_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CLOAKMILL_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          CLOAKMILL_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CLOAKMILL_HEAD_REF: ${{ github.head_ref || github.ref_name }}
         run: |
           jq -e 'type == "object" and (has("error") | not)' claudecode-results.json > /dev/null 2>&1 || exit 0
           marker='<!-- claude-security-findings -->'
           count=$(jq '(.findings // []) | length' claudecode-results.json)
+          if [ -z "$CLOAKMILL_PR_NUMBER" ]; then
+            CLOAKMILL_PR_NUMBER=$(gh api "repos/$GITHUB_REPOSITORY/pulls?head=$GITHUB_REPOSITORY_OWNER:$CLOAKMILL_HEAD_REF&state=open" \
+              --jq '.[0].number // empty')
+          fi
+          if [ -z "$CLOAKMILL_PR_NUMBER" ]; then
+            echo "No open pull request for $CLOAKMILL_HEAD_REF; skipping findings comment."
+            exit 0
+          fi
           comment_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$CLOAKMILL_PR_NUMBER/comments" \
             --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | tail -1)
           if [ "$count" -eq 0 ] && [ -z "$comment_id" ]; then
