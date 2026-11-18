@@ -31,12 +31,18 @@ _VALUE_VALIDATORS: dict[str, Callable[[str], bool]] = {
     PAYMENT_CARD: lambda value: luhn_ok(digits_only(value)),
 }
 
+# Score used when the field name is a known sensitive alias but the value fails
+# format/checksum validation. Still emit so the field is not treated as clean.
+_UNVALIDATED_SCHEMA_SCORE = 0.4
+
 
 class SchemaFieldRecognizer(RuleRecognizer):
-    """When a structured field name is a known identifier, validate the value.
+    """When a structured field name is a known identifier, emit field evidence.
 
     Emits a whole-field ``FieldPathLocator`` observation with ``ScoreKind.SCHEMA``
-    when the leaf field name maps to a known entity type and the value matches.
+    when the leaf field name maps to a known entity type. Values that pass
+    format/checksum checks score ``1.0``. Non-empty values that fail validation
+    still emit at a reduced score so sensitive-named fields never fail open.
     """
 
     def __init__(self) -> None:
@@ -72,9 +78,13 @@ class SchemaFieldRecognizer(RuleRecognizer):
         if entity_type is None:
             return ()
 
-        validator = _VALUE_VALIDATORS.get(entity_type)
-        if validator is None or not validator(content):
+        # Empty fields stay empty; nothing to cover.
+        if content.strip() == "":
             return ()
+
+        validator = _VALUE_VALIDATORS.get(entity_type)
+        value_ok = validator is not None and validator(content)
+        score = 1.0 if value_ok else _UNVALIDATED_SCHEMA_SCORE
 
         if isinstance(part.original_locator, FieldPathLocator):
             locator: FieldPathLocator | TextOffsetLocator = part.original_locator
@@ -92,6 +102,6 @@ class SchemaFieldRecognizer(RuleRecognizer):
                 recognizer_id=self._capability.recognizer_id,
                 recognizer_version=self._capability.recognizer_version,
                 score_kind=ScoreKind.SCHEMA,
-                score_value=1.0,
+                score_value=score,
             ),
         )

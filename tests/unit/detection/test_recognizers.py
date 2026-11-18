@@ -151,11 +151,24 @@ def test_schema_field_recognizer_uses_field_path_evidence() -> None:
     assert hits[0].evidence_locator == part.original_locator
 
 
-def test_schema_field_recognizer_rejects_mismatched_value() -> None:
+def test_schema_field_recognizer_emits_weak_hit_on_mismatched_value() -> None:
+    """Sensitive field names must not fail open when value validation fails."""
     value = "not-an-email"
     part = _field_part(("email",), value)
     hits = SchemaFieldRecognizer().recognize(part, value, field_name="email")
-    assert hits == ()
+    assert len(hits) == 1
+    assert hits[0].entity_type == EMAIL_ADDRESS
+    assert hits[0].score_kind is ScoreKind.SCHEMA
+    assert hits[0].score_value == 0.4
+
+
+def test_schema_payment_card_emits_on_non_luhn_value() -> None:
+    value = "4111 1111 1111 1112"
+    part = _field_part(("card_number",), value)
+    hits = SchemaFieldRecognizer().recognize(part, value, field_name="card_number")
+    assert len(hits) == 1
+    assert hits[0].entity_type == PAYMENT_CARD
+    assert hits[0].score_value == 0.4
 
 
 def test_schema_field_ignores_unknown_field_names() -> None:

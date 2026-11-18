@@ -139,13 +139,19 @@ class DiscoveryEngine:
                 candidates.append(candidate)
 
         validation: ValidationResult = self._validator.validate(part, candidates)
+        weak_schema = any(
+            observation.recognizer_version.startswith("rule.schema_field/")
+            and observation.score_value is not None
+            and observation.score_value < 1.0
+            for observation in validation.accepted
+        )
         return PartDiscoveryResult(
             part_id=part.opaque_id,
             observations=validation.accepted,
             rejected=validation.rejected,
             conflicts=validation.conflicts,
             skipped=False,
-            requires_exception_review=validation.requires_exception_review,
+            requires_exception_review=validation.requires_exception_review or weak_schema,
         )
 
 
