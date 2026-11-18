@@ -482,6 +482,34 @@ def test_hard_link_to_excluded_file_is_excluded(tmp_path: Path) -> None:
     assert len(result.artifacts) == 1
 
 
+def test_hard_link_to_excluded_backslash_named_file_is_excluded(tmp_path: Path) -> None:
+    """Excluded-tree files with ``\\`` in the name must still contribute inodes."""
+    root = tmp_path / "pkg"
+    secrets = root / "secrets"
+    secrets.mkdir(parents=True)
+    # POSIX allows backslash in a filename; quarantine must not skip inode record.
+    excluded = secrets / r"token\secret.txt"
+    excluded.write_text("not-a-real-secret\n", encoding="utf-8")
+    alias = root / "alias.txt"
+    alias.hardlink_to(excluded)
+    _write(root / "ok.txt", "fine\n")
+
+    result = ingest_local_folder(
+        root,
+        access_scope="project:syn-demo",
+        exclusions=("secrets/**",),
+    )
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["secrets"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["alias.txt"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["alias.txt"].reason is AdmissionReason.EXPLICIT_EXCLUSION
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert result.admitted_payloads and all(
+        payload.relative_package_path == "ok.txt" for payload in result.admitted_payloads
+    )
+    assert len(result.artifacts) == 1
+
+
 def test_opaque_ids_are_hmac_keyed_per_scan(tmp_path: Path) -> None:
     """Opaque ids must not be offline-invertible path hashes."""
     root = tmp_path / "pkg"

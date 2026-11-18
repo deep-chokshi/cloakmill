@@ -165,11 +165,29 @@ def _collect_excluded_inodes(
                 raw_relative = child.relative_to(root_path).as_posix()
             except ValueError:
                 continue
-            if "\\" in raw_relative:
+
+            # Backslash is a legal POSIX filename character. Do not skip inode
+            # recording for those names — only admission/normalize rejects them.
+            has_backslash = "\\" in raw_relative or any(
+                "\\" in part for part in child.relative_to(root_path).parts
+            )
+            if has_backslash:
+                matched = under_exclusion or _matches_exclusion(raw_relative, exclusion_patterns)
+                if matched:
+                    record(child)
+                    if not child.is_symlink() and child.is_dir():
+                        walk(child, under_exclusion=True)
+                elif child.is_dir() and not child.is_symlink():
+                    walk(child, under_exclusion=False)
                 continue
+
             try:
                 relative = normalize_relative_package_path(raw_relative)
             except ValueError:
+                if under_exclusion:
+                    record(child)
+                    if not child.is_symlink() and child.is_dir():
+                        walk(child, under_exclusion=True)
                 continue
 
             matched = under_exclusion or _matches_exclusion(relative, exclusion_patterns)
@@ -272,9 +290,15 @@ def scan_local_folder(
                 continue
 
             # Quarantine backslash filenames before any rewrite/normalization.
+            # Still record the inode when the path falls under an exclusion so a
+            # hard-link alias cannot admit the scoped-out content.
             if "\\" in raw_relative or any(
                 "\\" in part for part in child.relative_to(root_path).parts
             ):
+                if _matches_exclusion(raw_relative, exclusion_patterns):
+                    identity = _inode_identity(child, follow_symlinks=False)
+                    if identity is not None:
+                        excluded_inodes.add(identity)
                 inventory.append(
                     _entry(
                         relative_package_path=encode_unsafe_relative_path(raw_relative),
@@ -288,6 +312,10 @@ def scan_local_folder(
             try:
                 relative = normalize_relative_package_path(raw_relative)
             except ValueError:
+                if _matches_exclusion(raw_relative, exclusion_patterns):
+                    identity = _inode_identity(child, follow_symlinks=False)
+                    if identity is not None:
+                        excluded_inodes.add(identity)
                 inventory.append(
                     _entry(
                         relative_package_path=encode_unsafe_relative_path(raw_relative),
