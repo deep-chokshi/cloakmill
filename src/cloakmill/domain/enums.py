@@ -71,3 +71,12 @@ class AnchorKind(StrEnum):
     ACCOUNT_ID = "account_id"
     DISPLAY_NAME = "display_name"
     FIRST_NAME = "first_name"
+
+
+class PolicyAction(StrEnum):
+    """Content-policy action applied at an original locator or artifact scope."""
+
+    REPLACE = "replace"
+    REMOVE = "remove"
+    INERT = "inert"
+    EXCLUDE = "exclude"

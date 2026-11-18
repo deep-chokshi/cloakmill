@@ -1,10 +1,23 @@
 """Canonical identities, temporal aliases, and versioned synthetic profiles.
 
 F06 implements strong-anchor identity resolution and grouped exceptions.
-Profile assignment and frozen mapping snapshots belong to later features.
+F03 mapping/policy snapshot shapes are re-exported for assignment (F07).
 """
 
-from cloakmill.domain.enums import AnchorKind, DecisionOutcome, EntityKind
+from cloakmill.domain.enums import AnchorKind, DecisionOutcome, EntityKind, PolicyAction
+from cloakmill.domain.mapping import (
+    EntityGraphVersion,
+    MappingAssignment,
+    MappingSnapshot,
+    NamespaceKeyRef,
+    PatchPlanEntry,
+    entity_graph_versions_equal,
+    mapping_snapshots_equal,
+    validate_entity_graph_version,
+    validate_mapping_snapshot,
+    validate_namespace_key_ref,
+    validate_patch_plan_entry,
+)
 from cloakmill.identity.graph import (
     AcceptedEntity,
     AcceptedEntityGraph,
@@ -51,10 +64,16 @@ __all__ = [
     "ContradictionConstraint",
     "DecisionOutcome",
     "DirectoryAnchor",
+    "EntityGraphVersion",
     "EntityKind",
     "ExceptionGroup",
     "IdentityDecision",
+    "MappingAssignment",
+    "MappingSnapshot",
     "MentionEvidence",
+    "NamespaceKeyRef",
+    "PatchPlanEntry",
+    "PolicyAction",
     "PrivateAnchorIndex",
     "ResolutionMetrics",
     "ResolutionResult",
@@ -62,7 +81,9 @@ __all__ = [
     "StrongAnchorIdentityResolver",
     "accepted_entity_graphs_equal",
     "anchor_kind_for_entity_type",
+    "entity_graph_versions_equal",
     "entity_opaque_id",
+    "mapping_snapshots_equal",
     "normalize_anchor_value",
     "opaque_anchor_ref",
     "opaque_directory_entity_ref",
@@ -73,5 +94,9 @@ __all__ = [
     "validate_accepted_entity",
     "validate_accepted_entity_graph",
     "validate_directory_anchor",
+    "validate_entity_graph_version",
+    "validate_mapping_snapshot",
     "validate_mention_evidence",
+    "validate_namespace_key_ref",
+    "validate_patch_plan_entry",
 ]
