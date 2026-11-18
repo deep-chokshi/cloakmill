@@ -311,6 +311,7 @@ def test_optional_anchors_are_ignored_by_assignment() -> None:
     opaque = opaque_anchor_ref(
         kind=AnchorKind.EMAIL,
         normalized_value="maya@acme.example",
+        namespace_id=scope.namespace_id,
         namespace_secret=secret,
     )
     entity = AcceptedEntity(
