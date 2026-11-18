@@ -53,10 +53,12 @@ def check_structure(
 ) -> tuple[Finding, ...]:
     """Reparse candidates; verify schemas and joins independently of writers."""
     findings: list[Finding] = []
-    by_id = {item.artifact_version_id: item for item in candidates}
+    # Iterate the full candidate sequence so duplicate ids cannot hide a bad artifact.
+    artifacts = tuple(candidates)
+    by_id = {item.artifact_version_id: item for item in artifacts}
     reparse_failed: set[str] = set()
 
-    for artifact in by_id.values():
+    for artifact in artifacts:
         if artifact.excluded:
             continue
         reparse = extract_parts_for_media_type(

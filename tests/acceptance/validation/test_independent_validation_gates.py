@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from cloakmill.domain import EntityKind, NamespaceKeyRef, PolicyAction
 from cloakmill.domain.enums import CoverageState, TextOffsetUnit
 from cloakmill.domain.locators import FieldPathLocator, TextOffsetLocator
@@ -32,6 +34,7 @@ from cloakmill.validation import (
     CODE_COVERAGE_OBSERVED_TAMPER,
     CODE_PRIVACY_CANARY_DETECTED,
     CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
+    CODE_PRIVACY_UNSCANNABLE_CANDIDATE,
     CODE_PRIVACY_UNSUPPORTED_KIND,
     CODE_STRUCTURE_JOIN_MISMATCH,
     CODE_STRUCTURE_REPARSE_FAILED,
@@ -48,6 +51,7 @@ from cloakmill.validation import (
     SeededCanary,
     StructureContext,
     ValidationDecision,
+    ValidationInputError,
     assert_report_has_no_sensitive_leak,
     sensitive_values_for_leak_checks,
     validate_release_candidate,
@@ -706,3 +710,84 @@ def test_unsupported_known_source_kind_fails_closed() -> None:
     )
     assert report.decision is ValidationDecision.BLOCK
     assert CODE_PRIVACY_UNSUPPORTED_KIND in {finding.code for finding in report.findings}
+
+
+def test_unscannable_media_type_blocks_privacy_gate() -> None:
+    """Unsupported media must BLOCK in privacy, not silently continue."""
+    coverage = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-xml",
+                artifact_version_id="art-xml",
+                surface_key="document",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    privacy = PrivacyContext(
+        known_sources=(
+            KnownSourceIdentifier(
+                opaque_id="ks-maya",
+                normalized_value="maya@acme.example",
+                kind="email_address",
+            ),
+        ),
+        allowed_synthetics=frozenset(),
+    )
+    report = validate_release_candidate(
+        candidate=ReleaseCandidate(
+            artifacts=(
+                CandidateArtifact(
+                    artifact_version_id="art-xml",
+                    media_type="application/xml",
+                    payload=b"<r><email>maya@acme.example</email></r>",
+                ),
+            ),
+            expected_coverage=coverage,
+        ),
+        privacy=privacy,
+        structure=StructureContext(),
+    )
+    assert report.decision is ValidationDecision.BLOCK
+    codes = {finding.code for finding in report.findings}
+    assert CODE_PRIVACY_UNSCANNABLE_CANDIDATE in codes
+    assert CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE in codes
+    assert_report_has_no_sensitive_leak(
+        report,
+        sensitive_values_for_leak_checks(privacy=privacy),
+    )
+
+
+def test_duplicate_artifact_ids_rejected() -> None:
+    """Duplicate artifact_version_id must fail closed before gates collapse them."""
+    coverage = CoverageLedger(
+        entries=(
+            CoverageSurfaceRef(
+                opaque_id="cov-1",
+                artifact_version_id="art-1",
+                surface_key="document",
+                state=CoverageState.PROCESSED,
+            ),
+        )
+    )
+    privacy = PrivacyContext(known_sources=(), allowed_synthetics=frozenset())
+    with pytest.raises(ValidationInputError, match="duplicate candidate artifact_version_id"):
+        validate_release_candidate(
+            candidate=ReleaseCandidate(
+                artifacts=(
+                    CandidateArtifact(
+                        artifact_version_id="art-1",
+                        media_type="application/xml",
+                        payload=b"<r>leak</r>",
+                    ),
+                    CandidateArtifact(
+                        artifact_version_id="art-1",
+                        media_type="application/json",
+                        payload=b'{"ok":"1"}\n',
+                    ),
+                ),
+                expected_coverage=coverage,
+            ),
+            privacy=privacy,
+            structure=StructureContext(),
+        )
