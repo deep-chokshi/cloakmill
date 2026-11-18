@@ -45,3 +45,12 @@ class LocatorKind(StrEnum):
 
     TEXT_OFFSET = "text_offset"
     FIELD_PATH = "field_path"
+
+
+class PolicyAction(StrEnum):
+    """Content-policy action applied at an original locator or artifact scope."""
+
+    REPLACE = "replace"
+    REMOVE = "remove"
+    INERT = "inert"
+    EXCLUDE = "exclude"
