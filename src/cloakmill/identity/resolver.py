@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from cloakmill.domain.enums import AnchorKind, DecisionOutcome, EntityKind
 from cloakmill.domain.errors import DomainValidationError
@@ -34,6 +34,7 @@ from cloakmill.identity.ids import (
     exception_opaque_id,
     graph_opaque_id,
     opaque_anchor_ref,
+    opaque_directory_entity_ref,
     opaque_weak_signal_ref,
     require_namespace_secret,
 )
@@ -74,19 +75,36 @@ _EXCLUSIVE_ACCOUNT_ANCHORS = frozenset({AnchorKind.ACCOUNT_ID})
 
 @dataclass(frozen=True, slots=True)
 class ResolutionResult:
-    """Outputs of one identity-resolution pass."""
+    """Outputs of one identity-resolution pass.
+
+    ``private_anchor_index`` is private-boundary only: excluded from ``repr`` /
+    ``str`` and must never be logged or serialized into release artifacts.
+    """
 
     graph: AcceptedEntityGraph
     decisions: tuple[IdentityDecision, ...]
     exceptions: tuple[ExceptionGroup, ...]
     contradictions: tuple[ContradictionConstraint, ...]
     metrics: ResolutionMetrics
-    private_anchor_index: PrivateAnchorIndex
+    private_anchor_index: PrivateAnchorIndex = field(repr=False)
     policy_version: str = POLICY_VERSION
 
     @property
     def requires_exception_review(self) -> bool:
         return len(self.exceptions) > 0 or len(self.contradictions) > 0
+
+    def __repr__(self) -> str:
+        return (
+            "ResolutionResult("
+            f"entities={len(self.graph.entities)}, "
+            f"decisions={len(self.decisions)}, "
+            f"exceptions={len(self.exceptions)}, "
+            f"contradictions={len(self.contradictions)}, "
+            f"policy_version={self.policy_version!r})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
 
 class _UnionFind:
@@ -157,7 +175,11 @@ class StrongAnchorIdentityResolver:
             raise DomainValidationError("mention observation_id values must be unique")
 
         by_id = {mention.observation_id: mention for mention in validated}
-        directory_index = _index_directory(directory_entries)
+        directory_index = _index_directory(
+            directory_entries,
+            namespace_id=namespace_id,
+            namespace_secret=secret,
+        )
         private_values: dict[str, str] = {}
 
         strong_mentions: list[MentionEvidence] = []
@@ -174,7 +196,12 @@ class StrongAnchorIdentityResolver:
 
         # Weak-only mentions (e.g. payment_card, or name-only stubs) never auto-merge.
         for mention in weak_only:
-            weak_refs = _weak_signal_refs(mention, secret, private_values)
+            weak_refs = _weak_signal_refs(
+                mention,
+                namespace_id=namespace_id,
+                namespace_secret=secret,
+                private_values=private_values,
+            )
             exceptions.append(
                 ExceptionGroup(
                     opaque_id=exception_opaque_id(
@@ -313,7 +340,15 @@ class StrongAnchorIdentityResolver:
                         rule_version=POLICY_VERSION,
                         observation_ids=tuple(sorted({root, other})),
                         reason_code=REASON_DIRECTORY_ENTITY,
-                        evidence_refs=(entity_key, root, other),
+                        evidence_refs=(
+                            opaque_directory_entity_ref(
+                                entity_key=entity_key,
+                                namespace_id=namespace_id,
+                                namespace_secret=secret,
+                            ),
+                            root,
+                            other,
+                        ),
                     )
                 )
 
@@ -331,6 +366,11 @@ class StrongAnchorIdentityResolver:
                         by_anchor.get((other.anchor_kind, other.indexed_value()), [])
                     )
             if mailbox_obs and operator_obs:
+                mailbox_ref = opaque_directory_entity_ref(
+                    entity_key=anchor.entity_key,
+                    namespace_id=namespace_id,
+                    namespace_secret=secret,
+                )
                 decisions.append(
                     IdentityDecision(
                         opaque_id=decision_opaque_id(
@@ -343,7 +383,7 @@ class StrongAnchorIdentityResolver:
                         rule_version=POLICY_VERSION,
                         observation_ids=tuple(sorted({*mailbox_obs, *operator_obs})),
                         reason_code=REASON_SHARED_MAILBOX,
-                        evidence_refs=(anchor.entity_key, *sorted(set(operator_obs))),
+                        evidence_refs=(mailbox_ref, *sorted(set(operator_obs))),
                     )
                 )
 
@@ -355,14 +395,24 @@ class StrongAnchorIdentityResolver:
             member_list = sorted(members)
             member_mentions = [by_id[obs_id] for obs_id in member_list]
             entity_kind = _resolve_entity_kind(member_mentions, directory_index)
-            anchors, seed_pair = _collect_strong_anchors(member_mentions, secret, private_values)
+            anchors, seed_pair = _collect_strong_anchors(
+                member_mentions,
+                namespace_id=namespace_id,
+                namespace_secret=secret,
+                private_values=private_values,
+            )
             if seed_pair is None:
                 # Strong-mention components always have at least one strong anchor.
                 raise DomainValidationError(
                     "strong-anchor component missing seed anchor (internal invariant)"
                 )
             seed_kind, seed_value = seed_pair
-            directory_key = _directory_entity_key(member_mentions, directory_index)
+            directory_ref = _directory_entity_ref(
+                member_mentions,
+                directory_index,
+                namespace_id=namespace_id,
+                namespace_secret=secret,
+            )
             entity_id = entity_opaque_id(
                 entity_kind=entity_kind,
                 seed_anchor_kind=seed_kind,
@@ -375,7 +425,7 @@ class StrongAnchorIdentityResolver:
                 entity_kind=entity_kind,
                 observation_ids=tuple(member_list),
                 strong_anchors=tuple(anchors),
-                directory_entity_key=directory_key,
+                directory_entity_ref=directory_ref,
             )
             entities.append(entity)
             for obs_id in member_list:
@@ -443,6 +493,7 @@ class StrongAnchorIdentityResolver:
             weak_ref = opaque_weak_signal_ref(
                 kind=AnchorKind.FIRST_NAME,
                 normalized_value=name,
+                namespace_id=namespace_id,
                 namespace_secret=secret,
             )
             private_values[weak_ref] = name
@@ -543,15 +594,27 @@ class StrongAnchorIdentityResolver:
 
 def _index_directory(
     directory: Sequence[DirectoryAnchor],
+    *,
+    namespace_id: str,
+    namespace_secret: bytes,
 ) -> dict[tuple[AnchorKind, str], DirectoryAnchor]:
     index: dict[tuple[AnchorKind, str], DirectoryAnchor] = {}
     for anchor in directory:
         key = (anchor.anchor_kind, anchor.indexed_value())
         if key in index and index[key].entity_key != anchor.entity_key:
+            left_ref = opaque_directory_entity_ref(
+                entity_key=index[key].entity_key,
+                namespace_id=namespace_id,
+                namespace_secret=namespace_secret,
+            )
+            right_ref = opaque_directory_entity_ref(
+                entity_key=anchor.entity_key,
+                namespace_id=namespace_id,
+                namespace_secret=namespace_secret,
+            )
             raise DomainValidationError(
                 "directory conflict for anchor kind "
-                f"{anchor.anchor_kind.value}: "
-                f"{index[key].entity_key!r} vs {anchor.entity_key!r}"
+                f"{anchor.anchor_kind.value}: {left_ref} vs {right_ref}"
             )
         index[key] = anchor
     return index
@@ -559,6 +622,8 @@ def _index_directory(
 
 def _weak_signal_refs(
     mention: MentionEvidence,
+    *,
+    namespace_id: str,
     namespace_secret: bytes,
     private_values: dict[str, str],
 ) -> tuple[str, ...]:
@@ -568,6 +633,7 @@ def _weak_signal_refs(
         ref = opaque_weak_signal_ref(
             kind=AnchorKind.FIRST_NAME,
             normalized_value=value,
+            namespace_id=namespace_id,
             namespace_secret=namespace_secret,
         )
         private_values[ref] = value
@@ -577,6 +643,7 @@ def _weak_signal_refs(
         ref = opaque_weak_signal_ref(
             kind=AnchorKind.DISPLAY_NAME,
             normalized_value=value,
+            namespace_id=namespace_id,
             namespace_secret=namespace_secret,
         )
         private_values[ref] = value
@@ -628,6 +695,8 @@ def _resolve_entity_kind(
 
 def _collect_strong_anchors(
     mentions: Sequence[MentionEvidence],
+    *,
+    namespace_id: str,
     namespace_secret: bytes,
     private_values: dict[str, str],
 ) -> tuple[list[StrongAnchor], tuple[AnchorKind, str] | None]:
@@ -643,6 +712,7 @@ def _collect_strong_anchors(
         ref = opaque_anchor_ref(
             kind=kind,
             normalized_value=value,
+            namespace_id=namespace_id,
             namespace_secret=namespace_secret,
         )
         private_values[ref] = value
@@ -650,9 +720,12 @@ def _collect_strong_anchors(
     return [anchors[key] for key in sorted(anchors)], seed
 
 
-def _directory_entity_key(
+def _directory_entity_ref(
     mentions: Sequence[MentionEvidence],
     directory_index: Mapping[tuple[AnchorKind, str], DirectoryAnchor],
+    *,
+    namespace_id: str,
+    namespace_secret: bytes,
 ) -> str | None:
     keys: set[str] = set()
     for mention in mentions:
@@ -662,9 +735,13 @@ def _directory_entity_key(
         entry = directory_index.get(pair)
         if entry is not None:
             keys.add(entry.entity_key)
-    if len(keys) == 1:
-        return next(iter(keys))
-    return None
+    if len(keys) != 1:
+        return None
+    return opaque_directory_entity_ref(
+        entity_key=next(iter(keys)),
+        namespace_id=namespace_id,
+        namespace_secret=namespace_secret,
+    )
 
 
 def _separate_decision(

@@ -21,6 +21,7 @@ from cloakmill.identity.ids import (
     MIN_NAMESPACE_SECRET_LENGTH,
     entity_opaque_id,
     opaque_anchor_ref,
+    opaque_directory_entity_ref,
     opaque_weak_signal_ref,
     require_namespace_secret,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "entity_opaque_id",
     "normalize_anchor_value",
     "opaque_anchor_ref",
+    "opaque_directory_entity_ref",
     "opaque_weak_signal_ref",
     "require_namespace_secret",
     "score_wrong_merges",

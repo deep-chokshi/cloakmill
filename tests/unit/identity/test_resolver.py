@@ -15,6 +15,9 @@ from cloakmill.identity import (
     MentionEvidence,
     StrongAnchorIdentityResolver,
     entity_opaque_id,
+    opaque_anchor_ref,
+    opaque_directory_entity_ref,
+    opaque_weak_signal_ref,
     require_namespace_secret,
 )
 
@@ -298,8 +301,115 @@ def test_directory_conflict_message_omits_cleartext_value() -> None:
         )
     message = str(exc_info.value)
     assert "maya@acme.example" not in message
+    assert "person-a" not in message
+    assert "person-b" not in message
     assert "email" in message
-    assert "person-a" in message and "person-b" in message
+    left_ref = opaque_directory_entity_ref(
+        entity_key="person-a",
+        namespace_id="ns-demo",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+    )
+    right_ref = opaque_directory_entity_ref(
+        entity_key="person-b",
+        namespace_id="ns-demo",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+    )
+    assert left_ref in message and right_ref in message
+
+
+def test_anchor_and_weak_refs_include_namespace_id_in_hmac() -> None:
+    email = "maya@acme.example"
+    left = opaque_anchor_ref(
+        kind=AnchorKind.EMAIL,
+        normalized_value=email,
+        namespace_id="ns-a",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+    )
+    right = opaque_anchor_ref(
+        kind=AnchorKind.EMAIL,
+        normalized_value=email,
+        namespace_id="ns-b",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+    )
+    assert left != right
+    weak_left = opaque_weak_signal_ref(
+        kind=AnchorKind.FIRST_NAME,
+        normalized_value="maya",
+        namespace_id="ns-a",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+    )
+    weak_right = opaque_weak_signal_ref(
+        kind=AnchorKind.FIRST_NAME,
+        normalized_value="maya",
+        namespace_id="ns-b",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+    )
+    assert weak_left != weak_right
+
+
+def test_resolution_result_repr_omits_private_anchor_cleartext() -> None:
+    result = _resolve([_mention("obs-1", "email_address", "maya@acme.example", first_name="Maya")])
+    rendered = repr(result)
+    assert "maya@acme.example" not in rendered
+    assert "Maya" not in rendered
+    assert "private_anchor_index" not in rendered
+    assert "entities=1" in rendered
+    assert "maya@acme.example" not in repr(result.private_anchor_index)
+
+
+def test_shared_mailbox_evidence_and_directory_ref_are_opaque() -> None:
+    directory = (
+        DirectoryAnchor(
+            anchor_kind=AnchorKind.EMAIL,
+            normalized_value="helpdesk@acme.example",
+            entity_kind=EntityKind.ACCOUNT,
+            entity_key="acct-helpdesk",
+            is_shared=True,
+            operator_person_keys=("person-maya",),
+        ),
+        DirectoryAnchor(
+            anchor_kind=AnchorKind.EMAIL,
+            normalized_value="maya@acme.example",
+            entity_kind=EntityKind.PERSON,
+            entity_key="person-maya",
+        ),
+    )
+    result = _resolve(
+        [
+            _mention("obs-shared", "email_address", "helpdesk@acme.example"),
+            _mention("obs-maya", "email_address", "maya@acme.example", part_id="part-2"),
+        ],
+        directory=directory,
+    )
+    expected_mailbox = opaque_directory_entity_ref(
+        entity_key="acct-helpdesk",
+        namespace_id="ns-demo",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+    )
+    expected_person = opaque_directory_entity_ref(
+        entity_key="person-maya",
+        namespace_id="ns-demo",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+    )
+    shared_entity = next(
+        entity for entity in result.graph.entities if "obs-shared" in entity.observation_ids
+    )
+    person_entity = next(
+        entity for entity in result.graph.entities if "obs-maya" in entity.observation_ids
+    )
+    assert shared_entity.directory_entity_ref == expected_mailbox
+    assert person_entity.directory_entity_ref == expected_person
+    separate = [
+        decision
+        for decision in result.decisions
+        if decision.reason_code == "shared_mailbox_not_person_alias"
+    ]
+    assert separate
+    for decision in separate:
+        blob = json.dumps(decision.to_dict())
+        assert "acct-helpdesk" not in blob
+        assert "person-maya" not in blob
+        assert expected_mailbox in decision.evidence_refs
 
 
 def test_identity_package_does_not_load_held_out_eval_fixtures() -> None:

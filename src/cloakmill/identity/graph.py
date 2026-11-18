@@ -4,13 +4,14 @@ These shapes are produced by strong-anchor resolution (F06). They intentionally
 omit synthetic profile assignments and mapping key material (F07).
 
 Serialized graph records carry opaque keyed refs only — never cleartext emails,
-employee/account ids, or names.
+employee/account ids, names, or directory entity keys. Directory linkage uses
+``directory_entity_ref`` (HMAC under the namespace secret).
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from cloakmill.domain.enums import AnchorKind, DecisionOutcome, EntityKind
@@ -51,13 +52,17 @@ class StrongAnchor:
 
 @dataclass(frozen=True, slots=True)
 class AcceptedEntity:
-    """One accepted entity in a versioned graph, distinct by kind."""
+    """One accepted entity in a versioned graph, distinct by kind.
+
+    ``directory_entity_ref`` is a keyed opaque digest of the directory
+    entity_key — never the cleartext operator/person id.
+    """
 
     opaque_id: str
     entity_kind: EntityKind
     observation_ids: tuple[str, ...]
     strong_anchors: tuple[StrongAnchor, ...] = ()
-    directory_entity_key: str | None = None
+    directory_entity_ref: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -66,14 +71,18 @@ class AcceptedEntity:
             "observation_ids": list(self.observation_ids),
             "strong_anchors": [anchor.to_dict() for anchor in self.strong_anchors],
         }
-        if self.directory_entity_key is not None:
-            payload["directory_entity_key"] = self.directory_entity_key
+        if self.directory_entity_ref is not None:
+            payload["directory_entity_ref"] = self.directory_entity_ref
         return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AcceptedEntity:
         if not isinstance(data, dict):
             raise DomainValidationError("accepted entity must be an object")
+        if "directory_entity_key" in data:
+            raise DomainValidationError(
+                "directory_entity_key is not allowed; use directory_entity_ref"
+            )
         try:
             entity_kind = EntityKind(data["entity_kind"])
         except (KeyError, TypeError, ValueError) as exc:
@@ -84,12 +93,15 @@ class AcceptedEntity:
             raise DomainValidationError("observation_ids must be a list")
         if not isinstance(raw_anchors, list):
             raise DomainValidationError("strong_anchors must be a list")
+        directory_entity_ref = data.get("directory_entity_ref")
+        if directory_entity_ref is not None and not isinstance(directory_entity_ref, str):
+            raise DomainValidationError("directory_entity_ref must be a string or null")
         entity = cls(
             opaque_id=data.get("opaque_id", ""),
             entity_kind=entity_kind,
             observation_ids=tuple(raw_obs),
             strong_anchors=tuple(StrongAnchor.from_dict(item) for item in raw_anchors),
-            directory_entity_key=data.get("directory_entity_key"),
+            directory_entity_ref=directory_entity_ref,
         )
         validate_accepted_entity(entity)
         return entity
@@ -209,14 +221,27 @@ class AcceptedEntityGraph:
 class PrivateAnchorIndex:
     """In-process cleartext lookup by opaque_ref.
 
-    Private-boundary only: intentionally has no ``to_dict``. Never place this
+    Private-boundary only: intentionally has no ``to_dict``. Cleartext values
+    are excluded from ``repr`` / ``str`` and cannot be pickled. Never place this
     object in release manifests, logs, or UI DTOs.
     """
 
-    values: Mapping[str, str]
+    values: Mapping[str, str] = field(repr=False)
 
     def get(self, opaque_ref: str) -> str | None:
         return self.values.get(opaque_ref)
+
+    def __repr__(self) -> str:
+        return f"PrivateAnchorIndex(entries={len(self.values)})"
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+    def __getstate__(self) -> object:
+        raise TypeError("PrivateAnchorIndex cannot be pickled; private-boundary only")
+
+    def __reduce__(self) -> object:
+        raise TypeError("PrivateAnchorIndex cannot be pickled; private-boundary only")
 
 
 def validate_strong_anchor(anchor: StrongAnchor) -> None:
@@ -246,8 +271,8 @@ def validate_accepted_entity(entity: AcceptedEntity) -> None:
                 f"duplicate strong anchor on entity for kind {anchor.kind.value}"
             )
         seen_anchors.add(key)
-    if entity.directory_entity_key is not None:
-        require_opaque_id(entity.directory_entity_key, "directory_entity_key")
+    if entity.directory_entity_ref is not None:
+        require_opaque_id(entity.directory_entity_ref, "directory_entity_ref")
 
 
 def validate_accepted_entity_graph(graph: AcceptedEntityGraph) -> None:

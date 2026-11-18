@@ -3,6 +3,9 @@
 Entity and anchor identifiers that incorporate source values MUST use a keyed
 HMAC under a per-namespace secret held inside the private boundary. Unkeyed
 digests of emails / employee ids / account ids are invertible and forbidden.
+
+All keyed refs include ``namespace_id`` in the HMAC input so namespace separation
+holds even if a secret is reused across namespaces.
 """
 
 from __future__ import annotations
@@ -12,6 +15,7 @@ import hmac
 
 from cloakmill.domain.enums import AnchorKind, EntityKind
 from cloakmill.domain.errors import DomainValidationError
+from cloakmill.domain.fields import require_opaque_id
 
 # Minimum secret length for namespace-scoped HMAC material (private boundary only).
 MIN_NAMESPACE_SECRET_LENGTH = 16
@@ -40,12 +44,15 @@ def opaque_anchor_ref(
     *,
     kind: AnchorKind,
     normalized_value: str,
+    namespace_id: str,
     namespace_secret: bytes,
 ) -> str:
-    """Opaque keyed reference for a strong or weak anchor value."""
+    """Opaque keyed reference for a strong anchor value (namespace-scoped)."""
+    require_opaque_id(namespace_id, "namespace_id")
     digest = keyed_digest(
         namespace_secret,
         "anchor",
+        namespace_id,
         kind.value,
         normalized_value,
     )
@@ -56,16 +63,37 @@ def opaque_weak_signal_ref(
     *,
     kind: AnchorKind,
     normalized_value: str,
+    namespace_id: str,
     namespace_secret: bytes,
 ) -> str:
-    """Opaque keyed reference for a weak signal (first/display name)."""
+    """Opaque keyed reference for a weak signal (namespace-scoped)."""
+    require_opaque_id(namespace_id, "namespace_id")
     digest = keyed_digest(
         namespace_secret,
         "weak",
+        namespace_id,
         kind.value,
         normalized_value,
     )
     return f"wref-{kind.value}-{digest}"
+
+
+def opaque_directory_entity_ref(
+    *,
+    entity_key: str,
+    namespace_id: str,
+    namespace_secret: bytes,
+) -> str:
+    """Opaque keyed reference for a directory entity_key (namespace-scoped)."""
+    require_opaque_id(namespace_id, "namespace_id")
+    require_opaque_id(entity_key, "entity_key")
+    digest = keyed_digest(
+        namespace_secret,
+        "directory_entity",
+        namespace_id,
+        entity_key,
+    )
+    return f"dref-{digest}"
 
 
 def entity_opaque_id(
@@ -77,6 +105,7 @@ def entity_opaque_id(
     namespace_secret: bytes,
 ) -> str:
     """Opaque entity id via keyed HMAC over the seed anchor (not unkeyed SHA-256)."""
+    require_opaque_id(namespace_id, "namespace_id")
     digest = keyed_digest(
         namespace_secret,
         "entity",
