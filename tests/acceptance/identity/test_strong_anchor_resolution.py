@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import json
+from math import inf
 from pathlib import Path
 
 from cloakmill.domain import AnchorKind, EntityKind
 from cloakmill.identity import (
+    AcceptedEntity,
+    AcceptedEntityGraph,
     DirectoryAnchor,
     MentionEvidence,
     StrongAnchorIdentityResolver,
+    score_wrong_merges,
 )
+from cloakmill.identity.metrics import build_resolution_metrics
 
 FIXTURE = Path(__file__).parent / "fixtures" / "synthetic_resolution_cases.json"
+TEST_NAMESPACE_SECRET = b"cloakmill-accept-ns-secret"
 
 
 def _load_cases() -> list[dict]:
@@ -55,18 +61,29 @@ def test_synthetic_resolution_cases_report_zero_wrong_merges() -> None:
         result = resolver.resolve(
             mentions,
             namespace_id=namespace_id,
+            namespace_secret=TEST_NAMESPACE_SECRET,
             graph_version="accept-1",
             directory=directory,
             expected_links=expected_links,
         )
         expectations = case["assert"]
         assert len(result.graph.entities) == expectations["entity_count"], case["case_id"]
+        assert result.metrics.wrong_merge_count == 0, (
+            case["case_id"],
+            result.metrics.to_dict(),
+        )
         assert result.metrics.wrong_merge_rate is not None, case["case_id"]
         assert result.metrics.wrong_merge_rate <= expectations["max_wrong_merge_rate"], (
             case["case_id"],
             result.metrics.to_dict(),
         )
         assert result.requires_exception_review is expectations["require_review"], case["case_id"]
+
+        serialized = json.dumps(result.graph.to_dict())
+        for mention in mentions:
+            assert mention.normalized_value not in serialized, case["case_id"]
+        for group in result.exceptions:
+            assert "first_name:" not in json.dumps(group.to_dict())
 
         if "exception_reason" in expectations:
             assert any(
@@ -86,11 +103,8 @@ def test_synthetic_resolution_cases_report_zero_wrong_merges() -> None:
                 assert entity.entity_kind is EntityKind.PERSON
 
 
-def test_score_wrong_merges_detects_forced_error() -> None:
-    """Sanity-check the eval helper: a bad merge is countable."""
-    from cloakmill.domain import EntityKind as EK
-    from cloakmill.identity import AcceptedEntity, AcceptedEntityGraph, score_wrong_merges
-
+def test_score_wrong_merges_detects_forced_error_and_inf_rate() -> None:
+    """Bad merge with zero expected accept pairs reports inf rate, not 0.0."""
     graph = AcceptedEntityGraph(
         opaque_id="graph-bad",
         graph_version="1",
@@ -98,8 +112,47 @@ def test_score_wrong_merges_detects_forced_error() -> None:
         entities=(
             AcceptedEntity(
                 opaque_id="ent-bad",
-                entity_kind=EK.PERSON,
+                entity_kind=EntityKind.PERSON,
                 observation_ids=("obs_a", "obs_b"),
+                strong_anchors=(),
+            ),
+        ),
+    )
+    expected = [
+        {"expected_decision": "accept", "observation_ids": ["obs_a"]},
+        {"expected_decision": "accept", "observation_ids": ["obs_b"]},
+    ]
+    wrong, expected_pairs = score_wrong_merges(graph, expected)
+    assert wrong == 1
+    assert expected_pairs == 0
+    metrics = build_resolution_metrics(
+        graph=graph,
+        decisions=(),
+        exceptions=(),
+        total_mentions=2,
+        expected_links=expected,
+    )
+    assert metrics.wrong_merge_count == 1
+    assert metrics.wrong_merge_rate == inf
+
+
+def test_correct_merge_not_penalized_by_shared_abstain_review_ids() -> None:
+    """Accept pair A+A2 must not count wrong just because A also appears in abstain_review."""
+    graph = AcceptedEntityGraph(
+        opaque_id="graph-ok",
+        graph_version="1",
+        namespace_id="ns-demo",
+        entities=(
+            AcceptedEntity(
+                opaque_id="ent-a",
+                entity_kind=EntityKind.PERSON,
+                observation_ids=("obs_a", "obs_a2"),
+                strong_anchors=(),
+            ),
+            AcceptedEntity(
+                opaque_id="ent-b",
+                entity_kind=EntityKind.PERSON,
+                observation_ids=("obs_b",),
                 strong_anchors=(),
             ),
         ),
@@ -107,13 +160,17 @@ def test_score_wrong_merges_detects_forced_error() -> None:
     expected = [
         {
             "expected_decision": "accept",
-            "observation_ids": ["obs_a"],
+            "observation_ids": ["obs_a", "obs_a2"],
         },
         {
             "expected_decision": "accept",
             "observation_ids": ["obs_b"],
         },
+        {
+            "expected_decision": "abstain_review",
+            "observation_ids": ["obs_a", "obs_b"],
+        },
     ]
     wrong, expected_pairs = score_wrong_merges(graph, expected)
-    assert wrong == 1
-    assert expected_pairs == 0
+    assert wrong == 0
+    assert expected_pairs == 1

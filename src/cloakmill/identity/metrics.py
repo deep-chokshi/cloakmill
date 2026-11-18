@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import combinations
+from math import inf
 
 from cloakmill.domain.enums import DecisionOutcome
 from cloakmill.identity.graph import AcceptedEntityGraph, ExceptionGroup, IdentityDecision
@@ -16,6 +17,9 @@ class ResolutionMetrics:
 
     ``wrong_merge_rate`` is only populated when ``expected_links`` are supplied
     by an eval harness. Runtime resolution never loads held-out fixtures.
+
+    When ``expected_pair_count`` is 0 but wrong merges were observed, the rate is
+    ``math.inf`` (never forced to ``0.0``).
     """
 
     mention_count: int
@@ -29,6 +33,7 @@ class ResolutionMetrics:
     expected_pair_count: int | None = None
 
     def to_dict(self) -> dict[str, int | float | None]:
+        rate = self.wrong_merge_rate
         return {
             "mention_count": self.mention_count,
             "accepted_entity_count": self.accepted_entity_count,
@@ -37,7 +42,8 @@ class ResolutionMetrics:
             "review_group_count": self.review_group_count,
             "unresolved_rate": self.unresolved_rate,
             "wrong_merge_count": self.wrong_merge_count,
-            "wrong_merge_rate": self.wrong_merge_rate,
+            "wrong_merge_rate": rate if rate != inf else None,
+            "wrong_merge_rate_infinite": rate == inf if rate is not None else None,
             "expected_pair_count": self.expected_pair_count,
         }
 
@@ -60,10 +66,13 @@ def build_resolution_metrics(
     expected_pair_count: int | None = None
     if expected_links is not None:
         wrong_merge_count, expected_pair_count = score_wrong_merges(graph, expected_links)
-        if expected_pair_count == 0:
-            wrong_merge_rate = 0.0
-        else:
+        if expected_pair_count > 0:
             wrong_merge_rate = wrong_merge_count / expected_pair_count
+        elif wrong_merge_count > 0:
+            # Denominator is zero but wrong merges exist — do not report a false 0.0.
+            wrong_merge_rate = inf
+        else:
+            wrong_merge_rate = 0.0
 
     return ResolutionMetrics(
         mention_count=total_mentions,
@@ -86,13 +95,14 @@ def score_wrong_merges(
 
     Expected links use the F02 shape: ``observation_ids`` per entity plus
     ``expected_decision`` of ``accept`` / ``abstain_review`` / ``keep_separate``.
-    Only ``accept`` partitions contribute positive same-entity pairs. A wrong
-    merge is any predicted pair whose observations belong to different accept
-    entities, or that includes an observation marked ``keep_separate`` /
-    ``abstain_review`` relative to its pair partner.
+
+    Only ``accept`` partitions contribute positive same-entity pairs. Non-accept
+    links contribute *forbidden pairs* among their members — a predicted pair is
+    wrong for that reason only when both members appear together on the same
+    non-accept link (not merely because either id appears on any non-accept link).
     """
     accept_groups: list[set[str]] = []
-    non_merge_obs: set[str] = set()
+    forbidden_pairs: set[tuple[str, str]] = set()
     for link in expected_links:
         raw_ids = link.get("observation_ids", [])
         if not isinstance(raw_ids, list):
@@ -101,12 +111,15 @@ def score_wrong_merges(
         decision = str(link.get("expected_decision", ""))
         if decision == "accept":
             accept_groups.append(obs_ids)
-        else:
-            non_merge_obs.update(obs_ids)
+            continue
+        for left, right in combinations(sorted(obs_ids), 2):
+            forbidden_pairs.add((left, right))
 
     truth_entity: dict[str, int] = {}
     for index, group in enumerate(accept_groups):
         for obs_id in group:
+            # An observation may appear on both accept and abstain_review links;
+            # accept membership remains the positive partition for expected pairs.
             truth_entity[obs_id] = index
 
     predicted_pairs = _predicted_pairs(graph)
@@ -114,11 +127,12 @@ def score_wrong_merges(
 
     wrong = 0
     for left, right in predicted_pairs:
-        left_truth = truth_entity.get(left)
-        right_truth = truth_entity.get(right)
-        if left in non_merge_obs or right in non_merge_obs:
+        pair = (left, right) if left < right else (right, left)
+        if pair in forbidden_pairs:
             wrong += 1
             continue
+        left_truth = truth_entity.get(left)
+        right_truth = truth_entity.get(right)
         if left_truth is None or right_truth is None:
             # Observation absent from held-out accept set: treat co-membership
             # as a wrong merge when the partner has a known accept entity.

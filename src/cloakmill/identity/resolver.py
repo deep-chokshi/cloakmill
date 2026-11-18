@@ -3,6 +3,9 @@
 Detection observations remain proposals. This module links mentions that share
 stable anchors, keeps people/accounts/orgs distinct, abstains on weak-only
 signals, and preserves contradictions instead of transitive wrong merges.
+
+Serialized outputs carry opaque keyed refs only. Cleartext anchor values stay in
+an in-process ``PrivateAnchorIndex`` that is never serialized.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from cloakmill.identity.graph import (
     ContradictionConstraint,
     ExceptionGroup,
     IdentityDecision,
+    PrivateAnchorIndex,
     StrongAnchor,
     validate_accepted_entity_graph,
 )
@@ -29,6 +33,9 @@ from cloakmill.identity.ids import (
     entity_opaque_id,
     exception_opaque_id,
     graph_opaque_id,
+    opaque_anchor_ref,
+    opaque_weak_signal_ref,
+    require_namespace_secret,
 )
 from cloakmill.identity.mentions import (
     STRONG_ENTITY_TYPES,
@@ -74,6 +81,7 @@ class ResolutionResult:
     exceptions: tuple[ExceptionGroup, ...]
     contradictions: tuple[ContradictionConstraint, ...]
     metrics: ResolutionMetrics
+    private_anchor_index: PrivateAnchorIndex
     policy_version: str = POLICY_VERSION
 
     @property
@@ -88,8 +96,14 @@ class _UnionFind:
     def add(self, item: str) -> None:
         self._parent.setdefault(item, item)
 
+    def __contains__(self, item: object) -> bool:
+        return isinstance(item, str) and item in self._parent
+
     def find(self, item: str) -> str:
-        parent = self._parent.setdefault(item, item)
+        # Never auto-insert: weak-only observation ids must not enter the graph.
+        if item not in self._parent:
+            raise KeyError(item)
+        parent = self._parent[item]
         if parent != item:
             self._parent[item] = self.find(parent)
         return self._parent[item]
@@ -121,11 +135,13 @@ class StrongAnchorIdentityResolver:
         mentions: Sequence[MentionEvidence],
         *,
         namespace_id: str,
+        namespace_secret: bytes,
         graph_version: str = "1",
         directory: Sequence[DirectoryAnchor] = (),
         expected_links: Sequence[Mapping[str, object]] | None = None,
     ) -> ResolutionResult:
         require_opaque_id(namespace_id, "namespace_id")
+        secret = require_namespace_secret(namespace_secret)
         if not isinstance(graph_version, str) or graph_version.strip() == "":
             raise DomainValidationError("graph_version must be a non-empty string")
 
@@ -142,6 +158,7 @@ class StrongAnchorIdentityResolver:
 
         by_id = {mention.observation_id: mention for mention in validated}
         directory_index = _index_directory(directory_entries)
+        private_values: dict[str, str] = {}
 
         strong_mentions: list[MentionEvidence] = []
         weak_only: list[MentionEvidence] = []
@@ -157,7 +174,7 @@ class StrongAnchorIdentityResolver:
 
         # Weak-only mentions (e.g. payment_card, or name-only stubs) never auto-merge.
         for mention in weak_only:
-            weak_signals = _weak_signals(mention)
+            weak_refs = _weak_signal_refs(mention, secret, private_values)
             exceptions.append(
                 ExceptionGroup(
                     opaque_id=exception_opaque_id(
@@ -166,7 +183,7 @@ class StrongAnchorIdentityResolver:
                     ),
                     reason_code=REASON_NO_STRONG_ANCHOR,
                     observation_ids=(mention.observation_id,),
-                    weak_signals=weak_signals,
+                    weak_signal_refs=weak_refs,
                 )
             )
             decisions.append(
@@ -189,7 +206,7 @@ class StrongAnchorIdentityResolver:
         for mention in strong_mentions:
             uf.add(mention.observation_id)
 
-        # Index strong mentions by (kind, value).
+        # Index strong mentions by (kind, value) — cleartext used only in-process.
         by_anchor: dict[tuple[AnchorKind, str], list[str]] = defaultdict(list)
         for mention in strong_mentions:
             anchor = mention.strong_anchor()
@@ -331,7 +348,6 @@ class StrongAnchorIdentityResolver:
                 )
 
         components = uf.components()
-        # Build accepted entities from components that have at least one strong mention.
         entities: list[AcceptedEntity] = []
         obs_to_entity: dict[str, str] = {}
 
@@ -339,14 +355,20 @@ class StrongAnchorIdentityResolver:
             member_list = sorted(members)
             member_mentions = [by_id[obs_id] for obs_id in member_list]
             entity_kind = _resolve_entity_kind(member_mentions, directory_index)
-            anchors = _collect_strong_anchors(member_mentions)
-            seed = anchors[0] if anchors else StrongAnchor(AnchorKind.EMAIL, member_list[0])
+            anchors, seed_pair = _collect_strong_anchors(member_mentions, secret, private_values)
+            if seed_pair is None:
+                # Strong-mention components always have at least one strong anchor.
+                raise DomainValidationError(
+                    "strong-anchor component missing seed anchor (internal invariant)"
+                )
+            seed_kind, seed_value = seed_pair
             directory_key = _directory_entity_key(member_mentions, directory_index)
             entity_id = entity_opaque_id(
                 entity_kind=entity_kind,
-                seed_anchor_kind=seed.kind,
-                seed_value=seed.normalized_value,
+                seed_anchor_kind=seed_kind,
+                seed_value=seed_value,
                 namespace_id=namespace_id,
+                namespace_secret=secret,
             )
             entity = AcceptedEntity(
                 opaque_id=entity_id,
@@ -394,8 +416,6 @@ class StrongAnchorIdentityResolver:
                     )
                 )
 
-        # Kind-mismatch: same normalized email value cannot merge person vs account —
-        # already prevented; emit explicit SEPARATE when directory marks shared.
         # Weak first-name ambiguity across distinct accepted person entities.
         first_name_groups: dict[str, list[str]] = defaultdict(list)
         for mention in strong_mentions:
@@ -410,7 +430,6 @@ class StrongAnchorIdentityResolver:
             unique_entities = tuple(sorted(set(entity_ids)))
             if len(unique_entities) < 2:
                 continue
-            # Collect observations that only share this weak signal across entities.
             related_obs = sorted(
                 {
                     mention.observation_id
@@ -419,9 +438,14 @@ class StrongAnchorIdentityResolver:
                     and normalize_anchor_value(AnchorKind.FIRST_NAME, mention.first_name) == name
                 }
             )
-            # Only open a review group when no single strong anchor already unifies them.
             if len({obs_to_entity[obs] for obs in related_obs if obs in obs_to_entity}) < 2:
                 continue
+            weak_ref = opaque_weak_signal_ref(
+                kind=AnchorKind.FIRST_NAME,
+                normalized_value=name,
+                namespace_secret=secret,
+            )
+            private_values[weak_ref] = name
             exceptions.append(
                 ExceptionGroup(
                     opaque_id=exception_opaque_id(
@@ -431,7 +455,7 @@ class StrongAnchorIdentityResolver:
                     reason_code=REASON_WEAK_FIRST_NAME,
                     observation_ids=tuple(related_obs),
                     candidate_entity_ids=unique_entities,
-                    weak_signals=(f"first_name:{name}",),
+                    weak_signal_refs=(weak_ref,),
                 )
             )
             decisions.append(
@@ -484,7 +508,6 @@ class StrongAnchorIdentityResolver:
         )
         validate_accepted_entity_graph(graph)
 
-        # Deduplicate decisions by opaque_id while preserving order.
         seen_decisions: set[str] = set()
         unique_decisions: list[IdentityDecision] = []
         for decision in decisions:
@@ -514,6 +537,7 @@ class StrongAnchorIdentityResolver:
             exceptions=tuple(unique_exceptions),
             contradictions=tuple(contradictions),
             metrics=metrics,
+            private_anchor_index=PrivateAnchorIndex(values=dict(private_values)),
         )
 
 
@@ -525,23 +549,39 @@ def _index_directory(
         key = (anchor.anchor_kind, anchor.indexed_value())
         if key in index and index[key].entity_key != anchor.entity_key:
             raise DomainValidationError(
-                f"directory conflict for {key}: {index[key].entity_key!r} vs {anchor.entity_key!r}"
+                "directory conflict for anchor kind "
+                f"{anchor.anchor_kind.value}: "
+                f"{index[key].entity_key!r} vs {anchor.entity_key!r}"
             )
         index[key] = anchor
     return index
 
 
-def _weak_signals(mention: MentionEvidence) -> tuple[str, ...]:
-    signals: list[str] = []
+def _weak_signal_refs(
+    mention: MentionEvidence,
+    namespace_secret: bytes,
+    private_values: dict[str, str],
+) -> tuple[str, ...]:
+    refs: list[str] = []
     if mention.first_name is not None:
-        signals.append(
-            f"first_name:{normalize_anchor_value(AnchorKind.FIRST_NAME, mention.first_name)}"
+        value = normalize_anchor_value(AnchorKind.FIRST_NAME, mention.first_name)
+        ref = opaque_weak_signal_ref(
+            kind=AnchorKind.FIRST_NAME,
+            normalized_value=value,
+            namespace_secret=namespace_secret,
         )
+        private_values[ref] = value
+        refs.append(ref)
     if mention.display_name is not None:
-        signals.append(
-            f"display_name:{normalize_anchor_value(AnchorKind.DISPLAY_NAME, mention.display_name)}"
+        value = normalize_anchor_value(AnchorKind.DISPLAY_NAME, mention.display_name)
+        ref = opaque_weak_signal_ref(
+            kind=AnchorKind.DISPLAY_NAME,
+            normalized_value=value,
+            namespace_secret=namespace_secret,
         )
-    return tuple(signals)
+        private_values[ref] = value
+        refs.append(ref)
+    return tuple(refs)
 
 
 def _compatible_for_merge(
@@ -579,7 +619,6 @@ def _resolve_entity_kind(
     kinds = {_mention_entity_kind(mention, directory_index) for mention in mentions}
     if len(kinds) == 1:
         return next(iter(kinds))
-    # Prefer ACCOUNT when a shared mailbox is present; otherwise PERSON is unsafe.
     if EntityKind.ACCOUNT in kinds:
         return EntityKind.ACCOUNT
     if EntityKind.ORGANIZATION in kinds:
@@ -587,15 +626,28 @@ def _resolve_entity_kind(
     return EntityKind.PERSON
 
 
-def _collect_strong_anchors(mentions: Sequence[MentionEvidence]) -> list[StrongAnchor]:
+def _collect_strong_anchors(
+    mentions: Sequence[MentionEvidence],
+    namespace_secret: bytes,
+    private_values: dict[str, str],
+) -> tuple[list[StrongAnchor], tuple[AnchorKind, str] | None]:
     anchors: dict[tuple[str, str], StrongAnchor] = {}
+    seed: tuple[AnchorKind, str] | None = None
     for mention in mentions:
         pair = mention.strong_anchor()
         if pair is None:
             continue
         kind, value = pair
-        anchors[(kind.value, value)] = StrongAnchor(kind=kind, normalized_value=value)
-    return [anchors[key] for key in sorted(anchors)]
+        if seed is None:
+            seed = (kind, value)
+        ref = opaque_anchor_ref(
+            kind=kind,
+            normalized_value=value,
+            namespace_secret=namespace_secret,
+        )
+        private_values[ref] = value
+        anchors[(kind.value, ref)] = StrongAnchor(kind=kind, opaque_ref=ref)
+    return [anchors[key] for key in sorted(anchors)], seed
 
 
 def _directory_entity_key(
@@ -643,8 +695,8 @@ def _exclusive_conflict(
     right: str,
 ) -> ContradictionConstraint | None:
     """Block merges that would unify distinct exclusive anchors of the same kind."""
-    left_members = {obs for obs in by_id if uf.find(obs) == uf.find(left)}
-    right_members = {obs for obs in by_id if uf.find(obs) == uf.find(right)}
+    left_members = {obs for obs in by_id if obs in uf and uf.find(obs) == uf.find(left)}
+    right_members = {obs for obs in by_id if obs in uf and uf.find(obs) == uf.find(right)}
     left_members.add(left)
     right_members.add(right)
     left_vals = _exclusive_values(by_id, left_members)
@@ -656,7 +708,6 @@ def _exclusive_conflict(
         if not left_set or not right_set:
             continue
         if left_set != right_set and left_set.isdisjoint(right_set) is False:
-            # overlapping but not equal — still conflict if more than one value overall
             combined = left_set | right_set
             if len(combined) > 1:
                 return _make_conflict(kind, left_members, right_members)

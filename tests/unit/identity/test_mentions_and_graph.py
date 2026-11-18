@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from cloakmill.domain import AnchorKind, DomainValidationError, EntityKind
@@ -13,9 +15,12 @@ from cloakmill.identity import (
     StrongAnchor,
     accepted_entity_graphs_equal,
     normalize_anchor_value,
+    opaque_anchor_ref,
     validate_directory_anchor,
     validate_mention_evidence,
 )
+
+TEST_NAMESPACE_SECRET = b"cloakmill-test-ns-secret-01"
 
 
 def test_normalize_anchor_values() -> None:
@@ -59,12 +64,17 @@ def test_mention_and_directory_validation() -> None:
         )
 
 
-def test_accepted_entity_graph_round_trip_and_equality() -> None:
+def test_accepted_entity_graph_round_trip_uses_opaque_refs_only() -> None:
+    opaque = opaque_anchor_ref(
+        kind=AnchorKind.EMAIL,
+        normalized_value="maya@acme.example",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+    )
     entity = AcceptedEntity(
         opaque_id="ent-person-1",
         entity_kind=EntityKind.PERSON,
         observation_ids=("obs-a", "obs-b"),
-        strong_anchors=(StrongAnchor(kind=AnchorKind.EMAIL, normalized_value="maya@acme.example"),),
+        strong_anchors=(StrongAnchor(kind=AnchorKind.EMAIL, opaque_ref=opaque),),
         directory_entity_key="person-maya",
     )
     graph = AcceptedEntityGraph(
@@ -73,9 +83,18 @@ def test_accepted_entity_graph_round_trip_and_equality() -> None:
         namespace_id="ns-demo",
         entities=(entity,),
     )
-    restored = AcceptedEntityGraph.from_dict(graph.to_dict())
+    payload = graph.to_dict()
+    serialized = json.dumps(payload)
+    assert "maya@acme.example" not in serialized
+    assert "normalized_value" not in serialized
+    assert opaque in serialized
+
+    restored = AcceptedEntityGraph.from_dict(payload)
     assert accepted_entity_graphs_equal(graph, restored)
     assert restored.entity_ids == ("ent-person-1",)
+
+    with pytest.raises(DomainValidationError, match="opaque_ref"):
+        StrongAnchor.from_dict({"kind": "email", "normalized_value": "maya@acme.example"})
 
     with pytest.raises(DomainValidationError):
         AcceptedEntity.from_dict(

@@ -2,10 +2,14 @@
 
 These shapes are produced by strong-anchor resolution (F06). They intentionally
 omit synthetic profile assignments and mapping key material (F07).
+
+Serialized graph records carry opaque keyed refs only — never cleartext emails,
+employee/account ids, or names.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,23 +20,31 @@ from cloakmill.domain.fields import require_non_empty_str, require_opaque_id
 
 @dataclass(frozen=True, slots=True)
 class StrongAnchor:
-    """A strong identity anchor attached to an accepted entity."""
+    """A strong identity anchor attached to an accepted entity.
+
+    ``opaque_ref`` is a keyed digest (see ``opaque_anchor_ref``). Cleartext
+    values never belong on this record or in ``to_dict()``.
+    """
 
     kind: AnchorKind
-    normalized_value: str
+    opaque_ref: str
 
     def to_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind.value, "normalized_value": self.normalized_value}
+        return {"kind": self.kind.value, "opaque_ref": self.opaque_ref}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> StrongAnchor:
         if not isinstance(data, dict):
             raise DomainValidationError("strong anchor must be an object")
+        if "normalized_value" in data:
+            raise DomainValidationError(
+                "strong anchor must not carry cleartext normalized_value; use opaque_ref"
+            )
         try:
             kind = AnchorKind(data["kind"])
         except (KeyError, TypeError, ValueError) as exc:
             raise DomainValidationError(f"invalid strong anchor kind: {exc}") from exc
-        anchor = cls(kind=kind, normalized_value=data.get("normalized_value", ""))
+        anchor = cls(kind=kind, opaque_ref=data.get("opaque_ref", ""))
         validate_strong_anchor(anchor)
         return anchor
 
@@ -113,13 +125,16 @@ class IdentityDecision:
 
 @dataclass(frozen=True, slots=True)
 class ExceptionGroup:
-    """Grouped unresolved mentions for exception review (not per-mention approval)."""
+    """Grouped unresolved mentions for exception review (not per-mention approval).
+
+    ``weak_signal_refs`` holds keyed opaque refs only — never cleartext names.
+    """
 
     opaque_id: str
     reason_code: str
     observation_ids: tuple[str, ...]
     candidate_entity_ids: tuple[str, ...] = ()
-    weak_signals: tuple[str, ...] = ()
+    weak_signal_refs: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -127,7 +142,7 @@ class ExceptionGroup:
             "reason_code": self.reason_code,
             "observation_ids": list(self.observation_ids),
             "candidate_entity_ids": list(self.candidate_entity_ids),
-            "weak_signals": list(self.weak_signals),
+            "weak_signal_refs": list(self.weak_signal_refs),
         }
 
 
@@ -190,12 +205,26 @@ class AcceptedEntityGraph:
         return graph
 
 
+@dataclass(frozen=True, slots=True)
+class PrivateAnchorIndex:
+    """In-process cleartext lookup by opaque_ref.
+
+    Private-boundary only: intentionally has no ``to_dict``. Never place this
+    object in release manifests, logs, or UI DTOs.
+    """
+
+    values: Mapping[str, str]
+
+    def get(self, opaque_ref: str) -> str | None:
+        return self.values.get(opaque_ref)
+
+
 def validate_strong_anchor(anchor: StrongAnchor) -> None:
     if not isinstance(anchor.kind, AnchorKind):
         raise DomainValidationError("strong anchor kind must be an AnchorKind")
     if anchor.kind not in {AnchorKind.EMAIL, AnchorKind.EMPLOYEE_ID, AnchorKind.ACCOUNT_ID}:
         raise DomainValidationError(f"strong anchor kind must be strong, got {anchor.kind!r}")
-    require_non_empty_str(anchor.normalized_value, "normalized_value")
+    require_opaque_id(anchor.opaque_ref, "opaque_ref")
 
 
 def validate_accepted_entity(entity: AcceptedEntity) -> None:
@@ -211,9 +240,11 @@ def validate_accepted_entity(entity: AcceptedEntity) -> None:
     seen_anchors: set[tuple[str, str]] = set()
     for anchor in entity.strong_anchors:
         validate_strong_anchor(anchor)
-        key = (anchor.kind.value, anchor.normalized_value)
+        key = (anchor.kind.value, anchor.opaque_ref)
         if key in seen_anchors:
-            raise DomainValidationError(f"duplicate strong anchor on entity: {key}")
+            raise DomainValidationError(
+                f"duplicate strong anchor on entity for kind {anchor.kind.value}"
+            )
         seen_anchors.add(key)
     if entity.directory_entity_key is not None:
         require_opaque_id(entity.directory_entity_key, "directory_entity_key")

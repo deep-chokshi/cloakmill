@@ -11,10 +11,18 @@ from cloakmill.identity.graph import (
     ContradictionConstraint,
     ExceptionGroup,
     IdentityDecision,
+    PrivateAnchorIndex,
     StrongAnchor,
     accepted_entity_graphs_equal,
     validate_accepted_entity,
     validate_accepted_entity_graph,
+)
+from cloakmill.identity.ids import (
+    MIN_NAMESPACE_SECRET_LENGTH,
+    entity_opaque_id,
+    opaque_anchor_ref,
+    opaque_weak_signal_ref,
+    require_namespace_secret,
 )
 from cloakmill.identity.mentions import (
     STRONG_ENTITY_TYPES,
@@ -30,6 +38,7 @@ from cloakmill.identity.policy import POLICY_VERSION
 from cloakmill.identity.resolver import ResolutionResult, StrongAnchorIdentityResolver
 
 __all__ = [
+    "MIN_NAMESPACE_SECRET_LENGTH",
     "POLICY_VERSION",
     "STRONG_ENTITY_TYPES",
     "AcceptedEntity",
@@ -42,13 +51,18 @@ __all__ = [
     "ExceptionGroup",
     "IdentityDecision",
     "MentionEvidence",
+    "PrivateAnchorIndex",
     "ResolutionMetrics",
     "ResolutionResult",
     "StrongAnchor",
     "StrongAnchorIdentityResolver",
     "accepted_entity_graphs_equal",
     "anchor_kind_for_entity_type",
+    "entity_opaque_id",
     "normalize_anchor_value",
+    "opaque_anchor_ref",
+    "opaque_weak_signal_ref",
+    "require_namespace_secret",
     "score_wrong_merges",
     "validate_accepted_entity",
     "validate_accepted_entity_graph",
