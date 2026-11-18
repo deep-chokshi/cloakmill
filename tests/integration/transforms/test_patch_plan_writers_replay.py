@@ -519,15 +519,76 @@ def test_non_schema_and_person_keyed_surfaces_fail_closed() -> None:
     assert person_result.parts == ()
     assert person_result.parse_error == "UncoveredKeys"
 
+    # Bare usernames / TitleCase names / separator-free IDs are not schema keys.
+    username_json = b'{"jsmith":{"tickets":1},"mchen":{"tickets":2},"Maya":1,"E12345":2}\n'
+    username_result = extract_json_parts(artifact_version_id="art-users", payload=username_json)
+    assert username_result.parts == ()
+    assert username_result.parse_error == "UncoveredKeys"
+
     person_csv = b"maya@acme.example,jordan@acme.example\n1,2\n"
     csv_result = extract_csv_parts(artifact_version_id="art-person-csv", payload=person_csv)
     assert csv_result.parts == ()
     assert csv_result.parse_error == "UncoveredKeys"
 
+    username_csv = b"jsmith,Maya,E12345\n1,2,3\n"
+    username_csv_result = extract_csv_parts(
+        artifact_version_id="art-user-csv", payload=username_csv
+    )
+    assert username_csv_result.parts == ()
+    assert username_csv_result.parse_error == "UncoveredKeys"
+
     # Schema-safe keys still round-trip; sentinel constants remain exported for writers.
     assert EMPTY_KEY_SEGMENT.startswith("$")
     assert LITERAL_KEY_PREFIX.startswith("$")
     assert ROOT_SEGMENT.startswith("$")
+
+
+def test_json_writers_reject_person_keyed_documents() -> None:
+    """Writer-side key guard mirrors CSV header checks (extraction ok=False is not enough)."""
+    frozen = _freeze_two_people()
+    plan = plan_patches(
+        frozen=frozen,
+        namespace_secret=INT_NAMESPACE_SECRET,
+        requests=(),
+        artifact_scopes=(
+            ArtifactScope(
+                artifact_version_id="art-json-keys",
+                content_digest=content_digest_sha256(b'{"maya@acme.example":{"salary":120000}}\n'),
+            ),
+            ArtifactScope(
+                artifact_version_id="art-json-users",
+                content_digest=content_digest_sha256(b'{"jsmith":{"tickets":1}}\n'),
+            ),
+            ArtifactScope(
+                artifact_version_id="art-jsonl-keys",
+                content_digest=content_digest_sha256(b'{"maya@acme.example":{"salary":120000}}\n'),
+            ),
+        ),
+    )
+
+    with pytest.raises(WriterError, match="uncovered key-position content"):
+        write_artifact(
+            media_type="application/json",
+            original_payload=b'{"maya@acme.example":{"salary":120000}}\n',
+            artifact_version_id="art-json-keys",
+            plan=plan,
+        )
+
+    with pytest.raises(WriterError, match="uncovered key-position content"):
+        write_artifact(
+            media_type="application/json",
+            original_payload=b'{"jsmith":{"tickets":1}}\n',
+            artifact_version_id="art-json-users",
+            plan=plan,
+        )
+
+    with pytest.raises(WriterError, match="uncovered key-position content"):
+        write_artifact(
+            media_type="application/x-ndjson",
+            original_payload=b'{"maya@acme.example":{"salary":120000}}\n',
+            artifact_version_id="art-jsonl-keys",
+            plan=plan,
+        )
 
 
 def test_duplicate_csv_headers_fail_closed() -> None:

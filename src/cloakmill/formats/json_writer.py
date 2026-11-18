@@ -9,6 +9,7 @@ from typing import Any
 from cloakmill.domain.enums import PolicyAction
 from cloakmill.domain.locators import FieldPathLocator
 from cloakmill.domain.mapping import PatchPlanEntry
+from cloakmill.formats.common import is_schema_safe_key
 from cloakmill.formats.json_format import (
     ROOT_SEGMENT,
     decode_field_key,
@@ -28,6 +29,7 @@ def write_json_document(
 ) -> bytes:
     """Parse JSON, apply field-path patches, and emit UTF-8 JSON stably."""
     document = _load_json(original_payload)
+    _assert_schema_safe_keys(document)
     working: Any = deepcopy(document)
     for entry in _ordered_field_patches(patches):
         locator = require_field_path(entry.locator)
@@ -65,6 +67,9 @@ def write_jsonl_document(
             raise WriterError("invalid JSONL line") from exc
         line_indexes.append(line_no)
 
+    for document in documents:
+        _assert_schema_safe_keys(document)
+
     index_to_slot = {line_no: slot for slot, line_no in enumerate(line_indexes)}
     working_docs = [deepcopy(doc) for doc in documents]
 
@@ -99,6 +104,19 @@ def write_jsonl_document(
     if payload:
         payload += "\n"
     return payload.encode("utf-8")
+
+
+def _assert_schema_safe_keys(value: Any) -> None:
+    """Fail closed on person-keyed / non-schema object keys (mirrors CSV header guard)."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str) or not is_schema_safe_key(key):
+                raise WriterError("JSON object contains uncovered key-position content")
+            _assert_schema_safe_keys(child)
+        return
+    if isinstance(value, list):
+        for child in value:
+            _assert_schema_safe_keys(child)
 
 
 def _ordered_field_patches(patches: tuple[PatchPlanEntry, ...]) -> list[PatchPlanEntry]:
