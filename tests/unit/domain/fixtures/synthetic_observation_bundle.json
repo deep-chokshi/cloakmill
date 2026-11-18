@@ -1,0 +1,49 @@
+{
+  "artifact_version": {
+    "opaque_id": "art-syn-crm-1",
+    "source_version": "csv-snapshot-2026-02-14",
+    "private_integrity_digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "access_scope": "project:syn-demo",
+    "media_type": "text/csv"
+  },
+  "part": {
+    "opaque_id": "part-syn-row-0-owner",
+    "artifact_version_id": "art-syn-crm-1",
+    "surface_kind": "structured_field",
+    "original_locator": {
+      "kind": "field_path",
+      "path": ["rows", 0, "owner_email"]
+    },
+    "coverage_state": "processed",
+    "content_length": 17,
+    "normalization_map": []
+  },
+  "observation": {
+    "opaque_id": "obs-syn-owner-email",
+    "part_id": "part-syn-row-0-owner",
+    "artifact_version_id": "art-syn-crm-1",
+    "entity_type": "EMAIL_ADDRESS",
+    "evidence_locator": {
+      "kind": "text_offset",
+      "unit": "codepoints",
+      "start": 0,
+      "end": 17
+    },
+    "recognizer_version": "rule.email.v1",
+    "score_kind": "pattern_match",
+    "score_value": 1.0,
+    "evidence_refs": [
+      {
+        "opaque_id": "ev-syn-owner-email",
+        "part_id": "part-syn-row-0-owner",
+        "locator": {
+          "kind": "text_offset",
+          "unit": "codepoints",
+          "start": 0,
+          "end": 17
+        },
+        "recognizer_version": "rule.email.v1"
+      }
+    ]
+  }
+}
