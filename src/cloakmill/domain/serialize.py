@@ -13,11 +13,39 @@ from cloakmill.domain.locators import (
     TextOffsetLocator,
     locator_from_dict,
 )
+from cloakmill.domain.mapping import (
+    EntityGraphVersion,
+    MappingAssignment,
+    MappingSnapshot,
+    NamespaceKeyRef,
+    PatchPlanEntry,
+)
 from cloakmill.domain.observations import EvidenceRef, Observation
 
-DomainRecord = ArtifactVersion | Part | Observation | EvidenceRef | OriginalLocator
+DomainRecord = (
+    ArtifactVersion
+    | Part
+    | Observation
+    | EvidenceRef
+    | OriginalLocator
+    | NamespaceKeyRef
+    | EntityGraphVersion
+    | MappingAssignment
+    | MappingSnapshot
+    | PatchPlanEntry
+)
 type DomainRecordT = (
-    ArtifactVersion | Part | Observation | EvidenceRef | TextOffsetLocator | FieldPathLocator
+    ArtifactVersion
+    | Part
+    | Observation
+    | EvidenceRef
+    | TextOffsetLocator
+    | FieldPathLocator
+    | NamespaceKeyRef
+    | EntityGraphVersion
+    | MappingAssignment
+    | MappingSnapshot
+    | PatchPlanEntry
 )
 
 
@@ -54,6 +82,30 @@ def from_jsonable(
 ) -> FieldPathLocator: ...
 
 
+@overload
+def from_jsonable(data: dict[str, Any], record_type: type[NamespaceKeyRef]) -> NamespaceKeyRef: ...
+
+
+@overload
+def from_jsonable(
+    data: dict[str, Any], record_type: type[EntityGraphVersion]
+) -> EntityGraphVersion: ...
+
+
+@overload
+def from_jsonable(
+    data: dict[str, Any], record_type: type[MappingAssignment]
+) -> MappingAssignment: ...
+
+
+@overload
+def from_jsonable(data: dict[str, Any], record_type: type[MappingSnapshot]) -> MappingSnapshot: ...
+
+
+@overload
+def from_jsonable(data: dict[str, Any], record_type: type[PatchPlanEntry]) -> PatchPlanEntry: ...
+
+
 def from_jsonable[T: DomainRecordT](data: dict[str, Any], record_type: type[T]) -> T:
     """Parse and validate a domain record from a JSON-ready mapping."""
     if not isinstance(data, dict):
@@ -70,6 +122,16 @@ def from_jsonable[T: DomainRecordT](data: dict[str, Any], record_type: type[T]) 
         return cast(T, TextOffsetLocator.from_dict(data))
     if record_type is FieldPathLocator:
         return cast(T, FieldPathLocator.from_dict(data))
+    if record_type is NamespaceKeyRef:
+        return cast(T, NamespaceKeyRef.from_dict(data))
+    if record_type is EntityGraphVersion:
+        return cast(T, EntityGraphVersion.from_dict(data))
+    if record_type is MappingAssignment:
+        return cast(T, MappingAssignment.from_dict(data))
+    if record_type is MappingSnapshot:
+        return cast(T, MappingSnapshot.from_dict(data))
+    if record_type is PatchPlanEntry:
+        return cast(T, PatchPlanEntry.from_dict(data))
     raise DomainValidationError(f"unsupported domain record type: {record_type!r}")
 
 
