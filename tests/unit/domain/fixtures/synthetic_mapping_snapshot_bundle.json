@@ -1,0 +1,98 @@
+{
+  "namespace_key_ref": {
+    "opaque_id": "nkr-syn-demo-1",
+    "namespace_id": "ns-syn-demo",
+    "key_version": "nk.v1"
+  },
+  "entity_graph_version": {
+    "opaque_id": "egv-syn-demo-1",
+    "graph_version": "graph.v3",
+    "namespace_id": "ns-syn-demo",
+    "entity_ids": [
+      "ent-syn-maya",
+      "ent-syn-shared-mailbox"
+    ]
+  },
+  "mapping_snapshot": {
+    "opaque_id": "map-a5d319dbb5b50abe249f6e70",
+    "snapshot_version": "map.v3",
+    "namespace_id": "ns-syn-demo",
+    "entity_graph_version_id": "egv-syn-demo-1",
+    "policy_version": "policy.content.v2",
+    "namespace_key_ref": {
+      "opaque_id": "nkr-syn-demo-1",
+      "namespace_id": "ns-syn-demo",
+      "key_version": "nk.v1"
+    },
+    "private_integrity_digest": "hmac-sha256:2b9ee95909c19624cf6f2d605548debe854e838499ca3d8e30c438b204eea025",
+    "assignments": [
+      {
+        "entity_id": "ent-syn-maya",
+        "profile_id": "prof-syn-a12"
+      },
+      {
+        "entity_id": "ent-syn-shared-mailbox",
+        "profile_id": "prof-syn-b07"
+      }
+    ]
+  },
+  "patch_plan_entries": [
+    {
+      "opaque_id": "patch-syn-email-1",
+      "mapping_snapshot_id": "map-a5d319dbb5b50abe249f6e70",
+      "artifact_version_id": "art-syn-crm-1",
+      "part_id": "part-syn-row-0-owner",
+      "locator": {
+        "kind": "field_path",
+        "path": [
+          "rows",
+          0,
+          "owner_email"
+        ]
+      },
+      "action": "replace",
+      "entity_id": "ent-syn-maya",
+      "replacement_ref": "attr-syn-email-a12"
+    },
+    {
+      "opaque_id": "patch-syn-token-1",
+      "mapping_snapshot_id": "map-a5d319dbb5b50abe249f6e70",
+      "artifact_version_id": "art-syn-crm-1",
+      "part_id": "part-syn-row-0-token",
+      "locator": {
+        "kind": "text_offset",
+        "unit": "codepoints",
+        "start": 12,
+        "end": 40
+      },
+      "action": "inert",
+      "replacement_ref": "attr-syn-inert-cred-1"
+    },
+    {
+      "opaque_id": "patch-syn-remove-1",
+      "mapping_snapshot_id": "map-a5d319dbb5b50abe249f6e70",
+      "artifact_version_id": "art-syn-note-1",
+      "part_id": "part-syn-note-body",
+      "locator": {
+        "kind": "text_offset",
+        "unit": "codepoints",
+        "start": 0,
+        "end": 8
+      },
+      "action": "remove"
+    },
+    {
+      "opaque_id": "patch-syn-exclude-1",
+      "mapping_snapshot_id": "map-a5d319dbb5b50abe249f6e70",
+      "artifact_version_id": "art-syn-bin-1",
+      "part_id": "part-syn-unsupported",
+      "locator": {
+        "kind": "field_path",
+        "path": [
+          "blob"
+        ]
+      },
+      "action": "exclude"
+    }
+  ]
+}
