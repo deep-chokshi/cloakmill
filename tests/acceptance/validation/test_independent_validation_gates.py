@@ -203,6 +203,7 @@ def _write_clean_candidates(frozen):
     )
     plan = plan_patches(
         frozen=frozen,
+        namespace_secret=b"validation-acceptance-key!",
         requests=requests,
         referential_rewrites=referential,
         artifact_scopes=scopes,
