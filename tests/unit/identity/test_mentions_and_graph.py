@@ -145,10 +145,11 @@ def test_accepted_entity_graph_round_trip_uses_opaque_refs_only() -> None:
 
 
 def test_private_anchor_index_repr_omits_cleartext() -> None:
-    index = PrivateAnchorIndex(values={"aref-email-abc": "maya@acme.example"})
+    index = PrivateAnchorIndex({"aref-email-abc": "maya@acme.example"})
     rendered = repr(index)
     assert "maya@acme.example" not in rendered
     assert "entries=1" in rendered
     assert str(index) == rendered
+    assert not hasattr(index, "values")
     with pytest.raises(TypeError, match="cannot be pickled"):
         index.__reduce__()

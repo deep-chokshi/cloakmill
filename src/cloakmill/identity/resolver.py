@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass
 
 from cloakmill.domain.enums import AnchorKind, DecisionOutcome, EntityKind
 from cloakmill.domain.errors import DomainValidationError
@@ -79,12 +79,13 @@ _EXCLUSIVE_PERSON_ANCHORS = frozenset({AnchorKind.EMAIL, AnchorKind.EMPLOYEE_ID}
 _EXCLUSIVE_ACCOUNT_ANCHORS = frozenset({AnchorKind.ACCOUNT_ID})
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ResolutionResult:
     """Outputs of one identity-resolution pass.
 
-    ``private_anchor_index`` is private-boundary only: excluded from ``repr`` /
-    ``str`` and must never be logged or serialized into release artifacts.
+    ``private_anchor_index`` is private-boundary only: passed as an ``InitVar`` so
+    ``dataclasses.asdict`` / ``astuple`` never include it, and held behind a
+    non-field attribute. Must never be logged or serialized into release artifacts.
     """
 
     graph: AcceptedEntityGraph
@@ -92,8 +93,15 @@ class ResolutionResult:
     exceptions: tuple[ExceptionGroup, ...]
     contradictions: tuple[ContradictionConstraint, ...]
     metrics: ResolutionMetrics
-    private_anchor_index: PrivateAnchorIndex = field(repr=False)
+    private_anchors: InitVar[PrivateAnchorIndex]
     policy_version: str = POLICY_VERSION
+
+    def __post_init__(self, private_anchors: PrivateAnchorIndex) -> None:
+        object.__setattr__(self, "_private_anchor_index", private_anchors)
+
+    @property
+    def private_anchor_index(self) -> PrivateAnchorIndex:
+        return self._private_anchor_index
 
     @property
     def requires_exception_review(self) -> bool:
@@ -640,7 +648,7 @@ class StrongAnchorIdentityResolver:
             exceptions=tuple(unique_exceptions),
             contradictions=tuple(contradictions),
             metrics=metrics,
-            private_anchor_index=PrivateAnchorIndex(values=dict(private_values)),
+            private_anchors=PrivateAnchorIndex(dict(private_values)),
         )
 
 

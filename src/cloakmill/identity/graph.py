@@ -11,7 +11,7 @@ employee/account ids, names, or directory entity keys. Directory linkage uses
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from cloakmill.domain.enums import AnchorKind, DecisionOutcome, EntityKind
@@ -217,22 +217,26 @@ class AcceptedEntityGraph:
         return graph
 
 
-@dataclass(frozen=True, slots=True)
 class PrivateAnchorIndex:
     """In-process cleartext lookup by opaque_ref.
 
-    Private-boundary only: intentionally has no ``to_dict``. Cleartext values
-    are excluded from ``repr`` / ``str`` and cannot be pickled. Never place this
-    object in release manifests, logs, or UI DTOs.
+    Private-boundary only: not a dataclass (so ``dataclasses.asdict`` cannot
+    traverse it), has no ``to_dict``, and refuses pickling. Cleartext lives in a
+    name-mangled slot exposed only via ``get()``. Never place this object in
+    release manifests, logs, or UI DTOs.
     """
 
-    values: Mapping[str, str] = field(repr=False)
+    __slots__ = ("__values",)
+
+    def __init__(self, values: Mapping[str, str]) -> None:
+        # Name-mangled slot keeps cleartext off attribute dumps / asdict walks.
+        object.__setattr__(self, "_PrivateAnchorIndex__values", dict(values))
 
     def get(self, opaque_ref: str) -> str | None:
-        return self.values.get(opaque_ref)
+        return self.__values.get(opaque_ref)
 
     def __repr__(self) -> str:
-        return f"PrivateAnchorIndex(entries={len(self.values)})"
+        return f"PrivateAnchorIndex(entries={len(self.__values)})"
 
     def __str__(self) -> str:
         return self.__repr__()

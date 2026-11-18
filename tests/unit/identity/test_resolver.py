@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -432,6 +433,18 @@ def test_resolution_result_repr_omits_private_anchor_cleartext() -> None:
     assert "private_anchor_index" not in rendered
     assert "entities=1" in rendered
     assert "maya@acme.example" not in repr(result.private_anchor_index)
+
+
+def test_asdict_cannot_export_private_anchor_cleartext() -> None:
+    """Regression: dataclasses.asdict must not dump the cleartext reverse map."""
+    result = _resolve([_mention("obs-1", "email_address", "maya@acme.example", first_name="Maya")])
+    payload = asdict(result)
+    assert "private_anchor_index" not in payload
+    assert "private_anchors" not in payload
+    assert "_private_anchor_index" not in payload
+    serialized = json.dumps(payload, default=str)
+    assert "maya@acme.example" not in serialized
+    assert "Maya" not in serialized
 
 
 def test_shared_mailbox_evidence_and_directory_ref_are_opaque() -> None:
