@@ -23,7 +23,7 @@ from cloakmill.formats import (
     extract_parts_for_media_type,
     write_artifact,
 )
-from cloakmill.formats.json_writer import write_json_document, write_jsonl_document
+from cloakmill.formats.json_writer import write_jsonl_document
 from cloakmill.identity import (
     AcceptedEntity,
     AcceptedEntityGraph,
@@ -476,41 +476,27 @@ def test_json_root_sentinel_does_not_collide_with_value_key() -> None:
     assert line == {"value": maya.email, "id": 1}
 
 
-def test_empty_key_and_dollar_keys_are_escaped() -> None:
-    payload = json.dumps({"": "a", "$empty_key": "b", "$root": "c", "ok": "d"}).encode()
-    result = extract_json_parts(artifact_version_id="art-keys", payload=payload)
-    assert result.parse_error is None
-    paths = {tuple(part.original_locator.path) for part in result.parts}  # type: ignore[union-attr]
-    assert (EMPTY_KEY_SEGMENT,) in paths
-    assert (f"{LITERAL_KEY_PREFIX}$empty_key",) in paths
-    assert (f"{LITERAL_KEY_PREFIX}$root",) in paths
-    assert ("ok",) in paths
-    assert (ROOT_SEGMENT,) not in paths
+def test_non_schema_and_person_keyed_surfaces_fail_closed() -> None:
+    # Empty / $-prefixed / email-shaped keys are key-position content F08 cannot rewrite.
+    dollar_payload = json.dumps({"": "a", "$empty_key": "b", "ok": "d"}).encode()
+    dollar_result = extract_json_parts(artifact_version_id="art-keys", payload=dollar_payload)
+    assert dollar_result.parts == ()
+    assert dollar_result.parse_error == "UncoveredKeys"
 
-    # Writer can patch the literal "$empty_key" property without touching "".
-    from cloakmill.domain.mapping import PatchPlanEntry
+    person_json = b'{"maya@acme.example":{"tickets":12},"jordan@acme.example":{"tickets":3}}\n'
+    person_result = extract_json_parts(artifact_version_id="art-person", payload=person_json)
+    assert person_result.parts == ()
+    assert person_result.parse_error == "UncoveredKeys"
 
-    vault = build_replacement_vault({"attr-lit-1": "safe-lit"})
-    out = write_json_document(
-        original_payload=payload,
-        patches=(
-            PatchPlanEntry(
-                opaque_id="patch-lit-1",
-                mapping_snapshot_id="map-syn-1",
-                artifact_version_id="art-keys",
-                part_id="part-lit",
-                locator=FieldPathLocator(path=(f"{LITERAL_KEY_PREFIX}$empty_key",)),
-                action=PolicyAction.REPLACE,
-                entity_id="ent-maya",
-                replacement_ref="attr-lit-1",
-            ),
-        ),
-        vault=vault,
-    )
-    doc = json.loads(out.decode("utf-8"))
-    assert doc[""] == "a"
-    assert doc["$empty_key"] == "safe-lit"
-    assert doc["$root"] == "c"
+    person_csv = b"maya@acme.example,jordan@acme.example\n1,2\n"
+    csv_result = extract_csv_parts(artifact_version_id="art-person-csv", payload=person_csv)
+    assert csv_result.parts == ()
+    assert csv_result.parse_error == "UncoveredKeys"
+
+    # Schema-safe keys still round-trip; sentinel constants remain exported for writers.
+    assert EMPTY_KEY_SEGMENT.startswith("$")
+    assert LITERAL_KEY_PREFIX.startswith("$")
+    assert ROOT_SEGMENT.startswith("$")
 
 
 def test_duplicate_csv_headers_fail_closed() -> None:

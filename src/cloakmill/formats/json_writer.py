@@ -169,14 +169,14 @@ def _set_path_value(
             raise WriterError("object path segment must be a string key")
         key = decode_field_key(last)
         if key not in parent:
-            raise WriterError(f"missing JSON object key {key!r}")
+            raise WriterError("missing JSON object key at field path leaf")
         parent[key] = value
         return
     if isinstance(parent, list):
         if not isinstance(last, int):
             raise WriterError("array path segment must be an int index")
         if last < 0 or last >= len(parent):
-            raise WriterError(f"JSON array index {last} out of range")
+            raise WriterError("JSON array index out of range")
         parent[last] = value
         return
     raise WriterError("invalid JSON parent for field path write")
@@ -190,12 +190,12 @@ def _step(cursor: Any, segment: str | int) -> Any:
         try:
             return cursor[key]
         except KeyError as exc:
-            raise WriterError(f"missing JSON object key {key!r}") from exc
+            raise WriterError("missing JSON object key while walking field path") from exc
     if isinstance(cursor, list):
         if not isinstance(segment, int):
             raise WriterError("array path segment must be an int index")
         try:
             return cursor[segment]
         except IndexError as exc:
-            raise WriterError(f"JSON array index {segment} out of range") from exc
+            raise WriterError("JSON array index out of range while walking field path") from exc
     raise WriterError("field path walked into a non-container JSON value")

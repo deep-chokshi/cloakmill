@@ -9,7 +9,7 @@ from typing import Any
 from cloakmill.domain.artifacts import Part
 from cloakmill.domain.enums import CoverageState, SurfaceKind
 from cloakmill.domain.locators import FieldPathLocator
-from cloakmill.formats.common import part_id_for
+from cloakmill.formats.common import is_schema_safe_key, part_id_for
 from cloakmill.formats.text_format import ExtractedParts
 
 # FieldPathLocator rejects empty string segments; encode JSON "" keys explicitly.
@@ -31,7 +31,7 @@ def encode_field_key(key: object) -> str | None:
 
     Empty keys become ``EMPTY_KEY_SEGMENT``. Any key that starts with ``$`` is
     prefixed with ``LITERAL_KEY_PREFIX`` so reserved sentinels never collide with
-    real property names.
+    real property names. Callers must reject non-schema keys before encoding.
     """
     if not isinstance(key, str):
         return None
@@ -100,6 +100,9 @@ def _walk_values(
     if isinstance(value, dict):
         seen_encoded: set[str] = set()
         for key in sorted(value, key=lambda item: str(item)):
+            if not isinstance(key, str) or not is_schema_safe_key(key):
+                # Writers cannot rename keys; person-keyed / non-schema keys fail closed.
+                return "UncoveredKeys"
             encoded = encode_field_key(key)
             if encoded is None:
                 skipped[0] += 1

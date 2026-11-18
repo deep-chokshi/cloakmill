@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from cloakmill.domain.artifacts import Part
 from cloakmill.domain.enums import CoverageState, SurfaceKind
 from cloakmill.domain.locators import FieldPathLocator
-from cloakmill.formats.common import part_id_for
+from cloakmill.formats.common import is_schema_safe_key, part_id_for
 from cloakmill.formats.text_format import ExtractedParts
 
 
@@ -47,6 +47,10 @@ def extract_csv_parts(
         # Duplicate header names make ("rows", i, name) paths ambiguous and can
         # leave an unpatched column's original value in the writer output.
         return CsvExtractResult(parts=(), parse_error="InvalidHeader")
+    if any(not is_schema_safe_key(name) for name in header):
+        # Header cells are never rewritten by F08 writers; person-keyed headers
+        # would ship original identifiers while reporting PROCESSED coverage.
+        return CsvExtractResult(parts=(), parse_error="UncoveredKeys")
 
     parts: list[Part] = []
     ordinal = 0

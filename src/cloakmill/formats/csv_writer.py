@@ -8,6 +8,7 @@ import io
 from cloakmill.domain.enums import PolicyAction
 from cloakmill.domain.locators import FieldPathLocator
 from cloakmill.domain.mapping import PatchPlanEntry
+from cloakmill.formats.common import is_schema_safe_key
 from cloakmill.formats.write_common import require_field_path, resolve_patch_text
 from cloakmill.transforms.errors import WriterError
 from cloakmill.transforms.replacements import ReplacementVault
@@ -38,6 +39,8 @@ def write_csv_document(
     header = rows[0]
     if not header or any(name.strip() == "" for name in header) or len(set(header)) != len(header):
         raise WriterError("CSV header is invalid")
+    if any(not is_schema_safe_key(name) for name in header):
+        raise WriterError("CSV header contains uncovered key-position content")
 
     body = [list(row) for row in rows[1:]]
     patched_cells: set[tuple[int, int]] = set()
@@ -96,4 +99,4 @@ def _column_index(header: list[str], column: str | int) -> int:
     try:
         return header.index(column)
     except ValueError as exc:
-        raise WriterError(f"CSV header missing column {column!r}") from exc
+        raise WriterError("CSV header missing named column for field path") from exc
