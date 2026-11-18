@@ -1,5 +1,13 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Project, Source } from "./contracts.ts";
+import {
+  applyMappingMutation,
+  createEmptyMapping,
+  createReadyMapping,
+  mappingDto,
+  type MappingMutation,
+  type MappingWorkspace,
+} from "./identity-model.ts";
 
 export const SESSION_TTL_MS = 2 * 60 * 60 * 1000;
 export class WorkspaceError extends Error {}
@@ -16,7 +24,10 @@ export function parseProjectName(input: unknown): string {
   return name;
 }
 
-type StoredProject = Project & { sources: Source[] };
+type StoredProject = Project & {
+  sources: Source[];
+  mapping: MappingWorkspace;
+};
 type Session = {
   expiresAt: number;
   projects: Map<string, StoredProject>;
@@ -91,6 +102,19 @@ function projectDto(project: StoredProject): Project {
   };
 }
 
+function sampleSources(): Source[] {
+  return samples.map((source) => ({
+    id: source.id,
+    name: source.name,
+    format: source.format,
+    records: source.records,
+    coverage: source.coverage,
+    description: source.description,
+    surfaces: [...source.surfaces],
+    limitations: [...source.limitations],
+  }));
+}
+
 export class WorkspaceStore {
   #sessions = new Map<string, Session>();
   #now: () => number;
@@ -106,6 +130,9 @@ export class WorkspaceStore {
   #session(token: string | undefined) {
     this.#prune();
     return token ? this.#sessions.get(token) : undefined;
+  }
+  #project(token: string | undefined, projectId: string) {
+    return this.#session(token)?.projects.get(projectId);
   }
   createSession(): string {
     this.#prune();
@@ -128,7 +155,7 @@ export class WorkspaceStore {
     return [...(this.#session(token)?.projects.values() ?? [])].map(projectDto);
   }
   getProject(token: string | undefined, id: string): Project | null {
-    const project = this.#session(token)?.projects.get(id);
+    const project = this.#project(token, id);
     return project ? projectDto(project) : null;
   }
   createProject(token: string, input: unknown, submissionKey: string): Project {
@@ -162,15 +189,14 @@ export class WorkspaceStore {
       sourceCount: 0,
       createdAt: new Date(this.#now()).toISOString(),
       sources: [],
+      mapping: createEmptyMapping(name),
     };
     session.projects.set(project.id, project);
     session.submissions.set(submissionKey, project.id);
     return projectDto(project);
   }
   listSources(token: string | undefined, projectId: string): Source[] {
-    return structuredClone(
-      this.#session(token)?.projects.get(projectId)?.sources ?? [],
-    );
+    return structuredClone(this.#project(token, projectId)?.sources ?? []);
   }
   getSource(
     token: string | undefined,
@@ -184,23 +210,61 @@ export class WorkspaceStore {
     );
   }
   loadSamples(token: string | undefined, projectId: string): Source[] {
-    const project = this.#session(token)?.projects.get(projectId);
+    const project = this.#project(token, projectId);
     if (!project)
       throw new WorkspaceError(
         "This sample project is unavailable. Return to the workspace.",
       );
     if (!project.sources.length) {
-      project.sources = samples.map((source) => ({
-        id: source.id,
-        name: source.name,
-        format: source.format,
-        records: source.records,
-        coverage: source.coverage,
-        description: source.description,
-        surfaces: [...source.surfaces],
-        limitations: [...source.limitations],
-      }));
+      project.sources = sampleSources();
+      project.mapping = createReadyMapping(project.name);
     }
     return structuredClone(project.sources);
+  }
+  getMapping(
+    token: string | undefined,
+    projectId: string,
+  ): MappingWorkspace | null {
+    const project = this.#project(token, projectId);
+    return project ? mappingDto(project.mapping) : null;
+  }
+  mutateMapping(
+    token: string | undefined,
+    projectId: string,
+    mutation: MappingMutation,
+  ): MappingWorkspace {
+    const project = this.#project(token, projectId);
+    if (!project)
+      throw new WorkspaceError(
+        "This sample project is unavailable. Return to the workspace.",
+      );
+    if (project.mapping.status !== "ready") {
+      throw new WorkspaceError(
+        "Load sample sources before reviewing identities or profiles.",
+      );
+    }
+    const next = applyMappingMutation(project.mapping, mutation);
+    if (mutation.type === "FREEZE" && next.frozenRevision !== next.revision) {
+      throw new WorkspaceError(
+        "Resolve identity and coverage blockers before freezing this sample mapping.",
+      );
+    }
+    if (
+      mutation.type === "DECIDE" &&
+      next.decisions[mutation.caseId] !== mutation.value
+    ) {
+      throw new WorkspaceError("That identity choice is not available.");
+    }
+    if (
+      mutation.type === "SET_PROFILE" &&
+      next.profileId !== mutation.profileId
+    ) {
+      throw new WorkspaceError("That sample profile preset is not available.");
+    }
+    if (mutation.type === "REOPEN" && next.decisions[mutation.caseId]) {
+      throw new WorkspaceError("That identity decision could not be reopened.");
+    }
+    project.mapping = next;
+    return mappingDto(project.mapping);
   }
 }

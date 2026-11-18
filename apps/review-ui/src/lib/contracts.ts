@@ -16,6 +16,14 @@ export type Source = {
 };
 export type ActionResult = { error?: string };
 
+export type { MappingWorkspace, MappingMutation } from "./identity-model.ts";
+export type {
+  SampleEntity,
+  ReviewCase,
+  ProfilePreset,
+  EntityKind,
+} from "./identity-fixtures.ts";
+
 export const stages = [
   { id: "overview", label: "Overview", glyph: "◫" },
   { id: "sources", label: "Sources", glyph: "▤" },

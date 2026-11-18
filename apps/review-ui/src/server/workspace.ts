@@ -1,5 +1,6 @@
 import "server-only";
 import { cookies } from "next/headers";
+import type { MappingMutation } from "@/lib/identity-model";
 import { WorkspaceError, WorkspaceStore } from "@/lib/workspace-store";
 
 const scope = globalThis as typeof globalThis & {
@@ -34,6 +35,10 @@ export async function readSource(projectId: string, sourceId: string) {
     ? store.getSource(await token(), projectId, sourceId)
     : null;
 }
+export async function readMapping(projectId: string) {
+  requireSampleMode();
+  return store.getMapping(await token(), projectId);
+}
 export async function createProject(
   name: string,
   key: string,
@@ -59,4 +64,11 @@ export async function createProject(
 export async function loadSamples(projectId: string) {
   requireSampleMode();
   return store.loadSamples(await token(), projectId);
+}
+export async function mutateMapping(
+  projectId: string,
+  mutation: MappingMutation,
+) {
+  requireSampleMode();
+  return store.mutateMapping(await token(), projectId, mutation);
 }

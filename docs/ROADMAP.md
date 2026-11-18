@@ -30,9 +30,10 @@ do not establish implemented privacy processing.
 
 - [x] Next.js App Router foundation with the approved visual system and local assets.
 - [x] Sample project creation, overview, source inventory and coverage details.
+- [x] Identity review, replacement profiles, and sample freeze/invalidation against authored DTOs.
 - [x] Server-only sample access, bounded sessions, minimal DTOs and response hardening.
 - [x] Behavioral and production-browser tests; frontend CI configuration.
-- [ ] Complete identity review, profiles, preview, validation and releases in the app.
+- [ ] Complete preview, validation and releases in the app.
 - [ ] Qualify the completed UI against the persistent API.
 
 The [frontend guide](../apps/review-ui/README.md) describes the sample-only boundary.
