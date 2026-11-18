@@ -1,5 +1,8 @@
 """Unit tests for replacement safety and patch overlap resolution."""
 
+# security-scan-retrigger marker
+
+
 from __future__ import annotations
 
 import pytest
