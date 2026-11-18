@@ -95,7 +95,7 @@ def test_same_entity_gets_same_profile_within_namespace() -> None:
     assert "profiles" not in export
     assert "strong_anchors" not in export["snapshot"]
     assert "normalized_value" not in export
-    assert export["snapshot"]["private_integrity_digest"].startswith("sha256:")
+    assert export["snapshot"]["private_integrity_digest"].startswith("hmac-sha256:")
     vault = first.to_vault_dict()
     assert "profiles" in vault
     assert "snapshot" not in vault

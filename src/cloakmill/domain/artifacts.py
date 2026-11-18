@@ -19,6 +19,7 @@ _DIGEST_HEX_LENGTHS: dict[str, int] = {
     "sha256": 64,
     "sha384": 96,
     "sha512": 128,
+    "hmac-sha256": 64,
 }
 
 

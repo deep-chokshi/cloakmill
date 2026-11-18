@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
@@ -27,7 +27,12 @@ from cloakmill.domain import (
     to_jsonable,
     validate_entity_graph_version,
     validate_mapping_snapshot,
+    validate_mapping_snapshot_structure,
     validate_patch_plan_entry,
+)
+from cloakmill.domain.mapping import (
+    compute_mapping_snapshot_commitment,
+    mapping_snapshot_commitment_material,
 )
 from cloakmill.identity import (
     MappingSnapshot as IdentityMappingSnapshot,
@@ -37,6 +42,9 @@ from cloakmill.identity import (
 )
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "synthetic_mapping_snapshot_bundle.json"
+
+# Synthetic fixture secret — tests only; never a real namespace key.
+TEST_MAPPING_SECRET = b"synthetic-mapping-hmac!!"
 
 
 def _key_ref() -> NamespaceKeyRef:
@@ -67,6 +75,7 @@ def _snapshot() -> MappingSnapshot:
             MappingAssignment(entity_id="ent-syn-maya", profile_id="prof-syn-a12"),
             MappingAssignment(entity_id="ent-syn-shared-mailbox", profile_id="prof-syn-b07"),
         ),
+        namespace_secret=TEST_MAPPING_SECRET,
     )
 
 
@@ -140,6 +149,7 @@ def test_snapshot_equality_ignores_assignment_and_entity_order() -> None:
         policy_version=left.policy_version,
         namespace_key_ref=left.namespace_key_ref,
         assignments=tuple(reversed(left.assignments)),
+        namespace_secret=TEST_MAPPING_SECRET,
     )
     assert mapping_snapshots_equal(left, right)
 
@@ -150,6 +160,7 @@ def test_snapshot_equality_ignores_assignment_and_entity_order() -> None:
         policy_version="policy.content.v9",
         namespace_key_ref=left.namespace_key_ref,
         assignments=left.assignments,
+        namespace_secret=TEST_MAPPING_SECRET,
     )
     assert different_policy.opaque_id != left.opaque_id
     assert not mapping_snapshots_equal(left, different_policy)
@@ -168,7 +179,7 @@ def test_opaque_id_and_digest_reject_tampered_policy_or_key_ref() -> None:
         assignments=left.assignments,
     )
     with pytest.raises(DomainValidationError, match="opaque_id does not match"):
-        validate_mapping_snapshot(tampered)
+        validate_mapping_snapshot_structure(tampered)
 
     wrong_key = MappingSnapshot(
         opaque_id=left.opaque_id,
@@ -185,7 +196,71 @@ def test_opaque_id_and_digest_reject_tampered_policy_or_key_ref() -> None:
         assignments=left.assignments,
     )
     with pytest.raises(DomainValidationError, match="opaque_id does not match"):
-        validate_mapping_snapshot(wrong_key)
+        validate_mapping_snapshot_structure(wrong_key)
+
+
+def test_hmac_digest_rejects_recomputed_tamper_without_secret() -> None:
+    """Attacker who recomputes opaque_id still fails HMAC without the secret."""
+    left = _snapshot()
+    forged_assignments = (
+        MappingAssignment(entity_id="ent-syn-maya", profile_id="prof-syn-attacker"),
+    )
+    # Content-address opaque_id can be recomputed publicly…
+    forged_id, _forged_with_wrong = compute_mapping_snapshot_commitment(
+        snapshot_version=left.snapshot_version,
+        namespace_id=left.namespace_id,
+        entity_graph_version_id=left.entity_graph_version_id,
+        policy_version=left.policy_version,
+        namespace_key_ref=left.namespace_key_ref,
+        assignments=forged_assignments,
+        namespace_secret=b"attacker-chosen-secret",
+    )
+    forged = MappingSnapshot(
+        opaque_id=forged_id,
+        snapshot_version=left.snapshot_version,
+        namespace_id=left.namespace_id,
+        entity_graph_version_id=left.entity_graph_version_id,
+        policy_version=left.policy_version,
+        namespace_key_ref=left.namespace_key_ref,
+        private_integrity_digest=_forged_with_wrong,
+        assignments=forged_assignments,
+    )
+    validate_mapping_snapshot_structure(forged)
+    with pytest.raises(DomainValidationError, match="private_integrity_digest"):
+        validate_mapping_snapshot(forged, namespace_secret=TEST_MAPPING_SECRET)
+
+
+def test_commitment_material_is_injective_for_nul_and_colon() -> None:
+    key_ref = _key_ref()
+    base_kwargs = {
+        "snapshot_version": "map.v1",
+        "namespace_id": "ns-syn-demo",
+        "entity_graph_version_id": "egv-syn-demo-1",
+        "policy_version": "policy.v1",
+        "namespace_key_ref": key_ref,
+        "assignments": (MappingAssignment(entity_id="ent-a", profile_id="prof-1"),),
+    }
+    left = mapping_snapshot_commitment_material(**base_kwargs)
+    # Colon inside opaque ids must not collapse entity/profile fields.
+    right = mapping_snapshot_commitment_material(
+        snapshot_version="map.v1",
+        namespace_id="ns-syn-demo",
+        entity_graph_version_id="egv-syn-demo-1",
+        policy_version="policy.v1",
+        namespace_key_ref=key_ref,
+        assignments=(MappingAssignment(entity_id="ent-a:prof-1", profile_id="x"),),
+    )
+    assert left != right
+
+    with pytest.raises(DomainValidationError, match="control characters"):
+        mapping_snapshot_commitment_material(
+            snapshot_version="map.v1",
+            namespace_id="ns-syn-demo",
+            entity_graph_version_id="egv-syn-demo-1",
+            policy_version="policy.v1",
+            namespace_key_ref=replace(key_ref, key_version="nk.v1\x00ent-a:prof-1"),
+            assignments=(),
+        )
 
 
 def test_version_fields_are_required() -> None:
@@ -202,7 +277,7 @@ def test_version_fields_are_required() -> None:
             {"opaque_id": "nkr-syn-bad", "namespace_id": "ns-syn-demo", "key_version": ""}
         )
     with pytest.raises(DomainValidationError, match="snapshot_version"):
-        validate_mapping_snapshot(
+        validate_mapping_snapshot_structure(
             MappingSnapshot(
                 opaque_id="map-syn-bad",
                 snapshot_version="",
@@ -210,7 +285,7 @@ def test_version_fields_are_required() -> None:
                 entity_graph_version_id="egv-syn-demo-1",
                 policy_version="policy.content.v2",
                 namespace_key_ref=_key_ref(),
-                private_integrity_digest="sha256:" + ("ab" * 32),
+                private_integrity_digest="hmac-sha256:" + ("ab" * 32),
             )
         )
     with pytest.raises(DomainValidationError, match="policy_version"):
@@ -222,7 +297,7 @@ def test_version_fields_are_required() -> None:
                 "entity_graph_version_id": "egv-syn-demo-1",
                 "policy_version": "",
                 "namespace_key_ref": _key_ref().to_dict(),
-                "private_integrity_digest": "sha256:" + ("ab" * 32),
+                "private_integrity_digest": "hmac-sha256:" + ("ab" * 32),
                 "assignments": [],
             }
         )
@@ -230,7 +305,7 @@ def test_version_fields_are_required() -> None:
 
 @pytest.mark.parametrize("bad_id", [None, 12, True])
 def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
-    good_digest = "sha256:" + ("ab" * 32)
+    good_digest = "hmac-sha256:" + ("ab" * 32)
     with pytest.raises(DomainValidationError):
         NamespaceKeyRef.from_dict(
             {"opaque_id": bad_id, "namespace_id": "ns-syn-demo", "key_version": "nk.v1"}
@@ -390,7 +465,7 @@ def test_replace_and_inert_patch_constraints() -> None:
 
 def test_duplicate_assignments_rejected() -> None:
     with pytest.raises(DomainValidationError, match="duplicate entity assignment"):
-        validate_mapping_snapshot(
+        validate_mapping_snapshot_structure(
             MappingSnapshot(
                 opaque_id="map-syn-dup",
                 snapshot_version="map.v1",
@@ -398,7 +473,7 @@ def test_duplicate_assignments_rejected() -> None:
                 entity_graph_version_id="egv-syn-demo-1",
                 policy_version="policy.content.v2",
                 namespace_key_ref=_key_ref(),
-                private_integrity_digest="sha256:" + ("ab" * 32),
+                private_integrity_digest="hmac-sha256:" + ("ab" * 32),
                 assignments=(
                     MappingAssignment(entity_id="ent-syn-maya", profile_id="prof-syn-a12"),
                     MappingAssignment(entity_id="ent-syn-maya", profile_id="prof-syn-a99"),
@@ -440,7 +515,8 @@ def test_round_trip_from_committed_synthetic_fixture() -> None:
     snapshot = MappingSnapshot.from_dict(bundle["mapping_snapshot"])
     assert key_ref.namespace_id == snapshot.namespace_id == graph.namespace_id
     assert snapshot.entity_graph_version_id == graph.opaque_id
-    assert to_jsonable(snapshot)["private_integrity_digest"].startswith("sha256:")
+    assert to_jsonable(snapshot)["private_integrity_digest"].startswith("hmac-sha256:")
+    validate_mapping_snapshot(snapshot, namespace_secret=TEST_MAPPING_SECRET)
     for raw in bundle["patch_plan_entries"]:
         entry = PatchPlanEntry.from_dict(raw)
         assert entry.mapping_snapshot_id == snapshot.opaque_id

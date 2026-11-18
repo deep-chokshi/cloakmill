@@ -7,18 +7,26 @@ namespace key material, source-to-synthetic value maps, or original PII.
 from __future__ import annotations
 
 import hashlib
+import hmac
 from dataclasses import dataclass
 from typing import Any
 
 from cloakmill.domain.artifacts import validate_private_integrity_digest
 from cloakmill.domain.enums import PolicyAction
 from cloakmill.domain.errors import DomainValidationError
-from cloakmill.domain.fields import require_non_empty_str, require_opaque_id
+from cloakmill.domain.fields import (
+    length_prefixed_utf8,
+    require_opaque_id,
+    require_version_token,
+)
 from cloakmill.domain.locators import (
     OriginalLocator,
     locator_from_dict,
     validate_locator,
 )
+
+# Minimum secret length for mapping-snapshot HMAC (private boundary only).
+_MIN_MAPPING_SECRET_LENGTH = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,7 +165,9 @@ class MappingSnapshot:
             private_integrity_digest=data.get("private_integrity_digest", ""),
             assignments=assignments,
         )
-        validate_mapping_snapshot(snapshot)
+        # Structure + content-addressed opaque_id only. HMAC authentication
+        # requires ``validate_mapping_snapshot(..., namespace_secret=...)``.
+        validate_mapping_snapshot_structure(snapshot)
         return snapshot
 
 
@@ -213,6 +223,17 @@ class PatchPlanEntry:
         return entry
 
 
+def _require_mapping_secret(secret: object) -> bytes:
+    if not isinstance(secret, bytes | bytearray):
+        raise DomainValidationError("namespace_secret must be bytes")
+    material = bytes(secret)
+    if len(material) < _MIN_MAPPING_SECRET_LENGTH:
+        raise DomainValidationError(
+            f"namespace_secret must be at least {_MIN_MAPPING_SECRET_LENGTH} bytes"
+        )
+    return material
+
+
 def mapping_snapshot_commitment_material(
     *,
     snapshot_version: str,
@@ -221,25 +242,53 @@ def mapping_snapshot_commitment_material(
     policy_version: str,
     namespace_key_ref: NamespaceKeyRef,
     assignments: tuple[MappingAssignment, ...],
+) -> bytes:
+    """Canonical injective bytes covered by opaque_id and HMAC digest.
+
+    Fields are length-prefixed (not NUL-joined) so embedded separators cannot
+    collide distinct snapshots onto one commitment. Assignments are two separate
+    fields each (entity_id, profile_id), never a colon-joined pair.
+    """
+    require_version_token(snapshot_version, "snapshot_version")
+    require_version_token(policy_version, "policy_version")
+    require_version_token(namespace_key_ref.key_version, "key_version")
+    ordered = tuple(sorted(assignments, key=lambda item: item.entity_id))
+    parts: list[str] = [
+        "mapping-snapshot-v2",
+        snapshot_version,
+        namespace_id,
+        entity_graph_version_id,
+        policy_version,
+        namespace_key_ref.opaque_id,
+        namespace_key_ref.namespace_id,
+        namespace_key_ref.key_version,
+        str(len(ordered)),
+    ]
+    for item in ordered:
+        parts.append(item.entity_id)
+        parts.append(item.profile_id)
+    return length_prefixed_utf8(*parts)
+
+
+def compute_mapping_snapshot_opaque_id(
+    *,
+    snapshot_version: str,
+    namespace_id: str,
+    entity_graph_version_id: str,
+    policy_version: str,
+    namespace_key_ref: NamespaceKeyRef,
+    assignments: tuple[MappingAssignment, ...] = (),
 ) -> str:
-    """Canonical content covered by opaque_id and private_integrity_digest."""
-    assignment_parts = tuple(
-        f"{item.entity_id}:{item.profile_id}"
-        for item in sorted(assignments, key=lambda item: item.entity_id)
+    """Content-addressed opaque id (unkeyed). Not an authenticity guarantee."""
+    material = mapping_snapshot_commitment_material(
+        snapshot_version=snapshot_version,
+        namespace_id=namespace_id,
+        entity_graph_version_id=entity_graph_version_id,
+        policy_version=policy_version,
+        namespace_key_ref=namespace_key_ref,
+        assignments=assignments,
     )
-    return "\0".join(
-        (
-            "mapping-snapshot-v1",
-            snapshot_version,
-            namespace_id,
-            entity_graph_version_id,
-            policy_version,
-            namespace_key_ref.opaque_id,
-            namespace_key_ref.namespace_id,
-            namespace_key_ref.key_version,
-            *assignment_parts,
-        )
-    )
+    return f"map-{hashlib.sha256(material).hexdigest()[:24]}"
 
 
 def compute_mapping_snapshot_commitment(
@@ -250,8 +299,10 @@ def compute_mapping_snapshot_commitment(
     policy_version: str,
     namespace_key_ref: NamespaceKeyRef,
     assignments: tuple[MappingAssignment, ...] = (),
+    namespace_secret: bytes,
 ) -> tuple[str, str]:
-    """Return ``(opaque_id, private_integrity_digest)`` for snapshot content."""
+    """Return ``(opaque_id, private_integrity_digest)`` under namespace HMAC."""
+    secret = _require_mapping_secret(namespace_secret)
     material = mapping_snapshot_commitment_material(
         snapshot_version=snapshot_version,
         namespace_id=namespace_id,
@@ -260,8 +311,9 @@ def compute_mapping_snapshot_commitment(
         namespace_key_ref=namespace_key_ref,
         assignments=assignments,
     )
-    full_hex = hashlib.sha256(material.encode("utf-8")).hexdigest()
-    return f"map-{full_hex[:24]}", f"sha256:{full_hex}"
+    opaque_id = f"map-{hashlib.sha256(material).hexdigest()[:24]}"
+    mac_hex = hmac.new(secret, material, hashlib.sha256).hexdigest()
+    return opaque_id, f"hmac-sha256:{mac_hex}"
 
 
 def make_mapping_snapshot(
@@ -272,8 +324,9 @@ def make_mapping_snapshot(
     policy_version: str,
     namespace_key_ref: NamespaceKeyRef,
     assignments: tuple[MappingAssignment, ...] = (),
+    namespace_secret: bytes,
 ) -> MappingSnapshot:
-    """Build a validated snapshot with commitment fields derived from content."""
+    """Build a validated snapshot with HMAC integrity under ``namespace_secret``."""
     opaque_id, digest = compute_mapping_snapshot_commitment(
         snapshot_version=snapshot_version,
         namespace_id=namespace_id,
@@ -281,6 +334,7 @@ def make_mapping_snapshot(
         policy_version=policy_version,
         namespace_key_ref=namespace_key_ref,
         assignments=assignments,
+        namespace_secret=namespace_secret,
     )
     snapshot = MappingSnapshot(
         opaque_id=opaque_id,
@@ -292,19 +346,19 @@ def make_mapping_snapshot(
         private_integrity_digest=digest,
         assignments=assignments,
     )
-    validate_mapping_snapshot(snapshot)
+    validate_mapping_snapshot(snapshot, namespace_secret=namespace_secret)
     return snapshot
 
 
 def validate_namespace_key_ref(ref: NamespaceKeyRef) -> None:
     require_opaque_id(ref.opaque_id, "opaque_id")
     require_opaque_id(ref.namespace_id, "namespace_id")
-    require_non_empty_str(ref.key_version, "key_version")
+    require_version_token(ref.key_version, "key_version")
 
 
 def validate_entity_graph_version(graph: EntityGraphVersion) -> None:
     require_opaque_id(graph.opaque_id, "opaque_id")
-    require_non_empty_str(graph.graph_version, "graph_version")
+    require_version_token(graph.graph_version, "graph_version")
     require_opaque_id(graph.namespace_id, "namespace_id")
     seen: set[str] = set()
     for entity_id in graph.entity_ids:
@@ -319,12 +373,17 @@ def validate_mapping_assignment(assignment: MappingAssignment) -> None:
     require_opaque_id(assignment.profile_id, "profile_id")
 
 
-def validate_mapping_snapshot(snapshot: MappingSnapshot) -> None:
+def validate_mapping_snapshot_structure(snapshot: MappingSnapshot) -> None:
+    """Validate fields, duplicates, digest shape, and content-addressed opaque_id.
+
+    Does not authenticate ``private_integrity_digest``; call
+    ``validate_mapping_snapshot`` with ``namespace_secret`` for HMAC verification.
+    """
     require_opaque_id(snapshot.opaque_id, "opaque_id")
-    require_non_empty_str(snapshot.snapshot_version, "snapshot_version")
+    require_version_token(snapshot.snapshot_version, "snapshot_version")
     require_opaque_id(snapshot.namespace_id, "namespace_id")
     require_opaque_id(snapshot.entity_graph_version_id, "entity_graph_version_id")
-    require_non_empty_str(snapshot.policy_version, "policy_version")
+    require_version_token(snapshot.policy_version, "policy_version")
     if not isinstance(snapshot.namespace_key_ref, NamespaceKeyRef):
         raise DomainValidationError("namespace_key_ref must be a NamespaceKeyRef")
     validate_namespace_key_ref(snapshot.namespace_key_ref)
@@ -333,6 +392,10 @@ def validate_mapping_snapshot(snapshot: MappingSnapshot) -> None:
             "namespace_key_ref.namespace_id must match mapping snapshot namespace_id"
         )
     validate_private_integrity_digest(snapshot.private_integrity_digest)
+    if not snapshot.private_integrity_digest.startswith("hmac-sha256:"):
+        raise DomainValidationError(
+            "mapping snapshot private_integrity_digest must use hmac-sha256"
+        )
     seen_entities: set[str] = set()
     for assignment in snapshot.assignments:
         validate_mapping_assignment(assignment)
@@ -342,7 +405,7 @@ def validate_mapping_snapshot(snapshot: MappingSnapshot) -> None:
             )
         seen_entities.add(assignment.entity_id)
 
-    expected_id, expected_digest = compute_mapping_snapshot_commitment(
+    expected_id = compute_mapping_snapshot_opaque_id(
         snapshot_version=snapshot.snapshot_version,
         namespace_id=snapshot.namespace_id,
         entity_graph_version_id=snapshot.entity_graph_version_id,
@@ -352,6 +415,20 @@ def validate_mapping_snapshot(snapshot: MappingSnapshot) -> None:
     )
     if snapshot.opaque_id != expected_id:
         raise DomainValidationError("mapping snapshot opaque_id does not match committed content")
+
+
+def validate_mapping_snapshot(snapshot: MappingSnapshot, *, namespace_secret: bytes) -> None:
+    """Authenticate snapshot content under the namespace HMAC secret."""
+    validate_mapping_snapshot_structure(snapshot)
+    _expected_id, expected_digest = compute_mapping_snapshot_commitment(
+        snapshot_version=snapshot.snapshot_version,
+        namespace_id=snapshot.namespace_id,
+        entity_graph_version_id=snapshot.entity_graph_version_id,
+        policy_version=snapshot.policy_version,
+        namespace_key_ref=snapshot.namespace_key_ref,
+        assignments=snapshot.assignments,
+        namespace_secret=namespace_secret,
+    )
     if snapshot.private_integrity_digest != expected_digest:
         raise DomainValidationError(
             "mapping snapshot private_integrity_digest does not match committed content"
@@ -404,8 +481,8 @@ def entity_graph_versions_equal(left: EntityGraphVersion, right: EntityGraphVers
 
 def mapping_snapshots_equal(left: MappingSnapshot, right: MappingSnapshot) -> bool:
     """Return True when snapshots match for replay (assignment order ignored)."""
-    validate_mapping_snapshot(left)
-    validate_mapping_snapshot(right)
+    validate_mapping_snapshot_structure(left)
+    validate_mapping_snapshot_structure(right)
     left_assignments = frozenset((item.entity_id, item.profile_id) for item in left.assignments)
     right_assignments = frozenset((item.entity_id, item.profile_id) for item in right.assignments)
     return (
