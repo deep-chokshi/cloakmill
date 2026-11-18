@@ -63,9 +63,19 @@ def normalize_anchor_value(anchor_kind: AnchorKind, value: str) -> str:
     raise DomainValidationError(f"unsupported anchor kind for normalization: {anchor_kind!r}")
 
 
+# Anchor kinds whose values are source-local (must be scoped by authority_id).
+LOCAL_ANCHOR_KINDS: frozenset[AnchorKind] = frozenset(
+    {AnchorKind.EMPLOYEE_ID, AnchorKind.ACCOUNT_ID}
+)
+
+
 @dataclass(frozen=True, slots=True)
 class MentionEvidence:
-    """One detected mention plus the normalized value used for retrieval."""
+    """One detected mention plus the normalized value used for retrieval.
+
+    ``authority_id`` scopes source-local anchors (employee_id / account_id).
+    Emails are treated as globally unique and ignore authority for retrieval.
+    """
 
     observation_id: str
     entity_type: str
@@ -74,12 +84,32 @@ class MentionEvidence:
     artifact_version_id: str
     first_name: str | None = None
     display_name: str | None = None
+    authority_id: str = "default"
 
     def strong_anchor(self) -> tuple[AnchorKind, str] | None:
         kind = anchor_kind_for_entity_type(self.entity_type)
         if kind is None:
             return None
         return kind, normalize_anchor_value(kind, self.normalized_value)
+
+
+def retrieval_key(
+    kind: AnchorKind,
+    normalized_value: str,
+    *,
+    authority_id: str,
+) -> tuple[str, str, str]:
+    """Stable retrieval key for candidate indexing.
+
+    Emails are global (authority ignored). Employee/account ids are scoped to
+    ``authority_id`` so dense local identifiers cannot cross-link sources.
+    """
+    require_non_empty_str(authority_id, "authority_id")
+    if kind is AnchorKind.EMAIL:
+        return ("*", kind.value, normalized_value)
+    if kind in LOCAL_ANCHOR_KINDS:
+        return (authority_id, kind.value, normalized_value)
+    raise DomainValidationError(f"unsupported retrieval kind: {kind!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +139,7 @@ def validate_mention_evidence(mention: MentionEvidence) -> None:
     require_non_empty_str(mention.normalized_value, "normalized_value")
     require_opaque_id(mention.part_id, "part_id")
     require_opaque_id(mention.artifact_version_id, "artifact_version_id")
+    require_non_empty_str(mention.authority_id, "authority_id")
     if mention.first_name is not None:
         require_non_empty_str(mention.first_name, "first_name")
     if mention.display_name is not None:
@@ -137,7 +168,8 @@ def validate_directory_anchor(anchor: DirectoryAnchor) -> None:
     for key in anchor.operator_person_keys:
         require_opaque_id(key, "operator_person_keys[]")
         if key in seen:
-            raise DomainValidationError(f"duplicate operator_person_key: {key}")
+            # Do not embed cleartext directory keys in exception text.
+            raise DomainValidationError("duplicate operator_person_key in directory anchor")
         seen.add(key)
         if key == anchor.entity_key:
             raise DomainValidationError(

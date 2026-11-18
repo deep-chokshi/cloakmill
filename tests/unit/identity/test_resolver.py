@@ -34,6 +34,7 @@ def _mention(
     *,
     part_id: str = "part-1",
     first_name: str | None = None,
+    authority_id: str = "default",
 ) -> MentionEvidence:
     return MentionEvidence(
         observation_id=obs_id,
@@ -42,6 +43,7 @@ def _mention(
         part_id=part_id,
         artifact_version_id="art-1",
         first_name=first_name,
+        authority_id=authority_id,
     )
 
 
@@ -92,15 +94,73 @@ def test_same_employee_id_merges() -> None:
     assert set(result.graph.entities[0].observation_ids) == {"obs-a", "obs-b"}
 
 
-def test_colocated_email_and_employee_id_bind() -> None:
+def test_colocated_email_and_employee_id_without_directory_goes_to_review() -> None:
+    """Proximity alone is candidate evidence — not an automatic cross-kind merge."""
     result = _resolve(
         [
             _mention("obs-email", "email_address", "maya@acme.example", part_id="row-1"),
             _mention("obs-emp", "employee_id", "E-AB12CD", part_id="row-1"),
         ]
     )
+    assert len(result.graph.entities) == 2
+    assert result.requires_exception_review
+    assert any(
+        group.reason_code == "colocated_anchors_need_directory" for group in result.exceptions
+    )
+    assert not any(
+        set(entity.observation_ids) == {"obs-email", "obs-emp"} for entity in result.graph.entities
+    )
+
+
+def test_directory_bind_links_email_and_employee_id_across_parts() -> None:
+    directory = (
+        DirectoryAnchor(
+            anchor_kind=AnchorKind.EMAIL,
+            normalized_value="maya@acme.example",
+            entity_kind=EntityKind.PERSON,
+            entity_key="person-maya",
+        ),
+        DirectoryAnchor(
+            anchor_kind=AnchorKind.EMPLOYEE_ID,
+            normalized_value="E-AB12CD",
+            entity_kind=EntityKind.PERSON,
+            entity_key="person-maya",
+        ),
+    )
+    result = _resolve(
+        [
+            _mention("obs-email", "email_address", "maya@acme.example", part_id="row-1"),
+            _mention("obs-emp", "employee_id", "E-AB12CD", part_id="row-2"),
+        ],
+        directory=directory,
+    )
     assert len(result.graph.entities) == 1
     assert set(result.graph.entities[0].observation_ids) == {"obs-email", "obs-emp"}
+
+
+def test_local_ids_do_not_merge_across_authorities() -> None:
+    result = _resolve(
+        [
+            _mention(
+                "obs-hr",
+                "employee_id",
+                "E-001",
+                authority_id="hr",
+            ),
+            _mention(
+                "obs-sub",
+                "employee_id",
+                "E-001",
+                part_id="part-2",
+                authority_id="subsidiary",
+            ),
+        ]
+    )
+    assert len(result.graph.entities) == 2
+    assert {frozenset(entity.observation_ids) for entity in result.graph.entities} == {
+        frozenset({"obs-hr"}),
+        frozenset({"obs-sub"}),
+    }
 
 
 def test_ambiguous_first_name_does_not_merge_distinct_emails() -> None:
@@ -275,6 +335,23 @@ def test_entity_opaque_id_is_keyed_hmac_not_unkeyed_sha256() -> None:
         namespace_secret=b"different-secret-xx",
     )
     assert keyed != other
+    other_authority = entity_opaque_id(
+        entity_kind=EntityKind.PERSON,
+        seed_anchor_kind=AnchorKind.EMPLOYEE_ID,
+        seed_value="E-001",
+        namespace_id="ns-demo",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+        authority_id="hr",
+    )
+    same_id_other_authority = entity_opaque_id(
+        entity_kind=EntityKind.PERSON,
+        seed_anchor_kind=AnchorKind.EMPLOYEE_ID,
+        seed_value="E-001",
+        namespace_id="ns-demo",
+        namespace_secret=TEST_NAMESPACE_SECRET,
+        authority_id="subsidiary",
+    )
+    assert other_authority != same_id_other_authority
     with pytest.raises(DomainValidationError):
         require_namespace_secret(b"short")
 

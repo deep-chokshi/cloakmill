@@ -66,6 +66,19 @@ def test_mention_and_directory_validation() -> None:
             )
         )
 
+    with pytest.raises(DomainValidationError, match="duplicate operator_person_key") as exc_info:
+        validate_directory_anchor(
+            DirectoryAnchor(
+                anchor_kind=AnchorKind.EMAIL,
+                normalized_value="helpdesk@acme.example",
+                entity_kind=EntityKind.ACCOUNT,
+                entity_key="acct-helpdesk",
+                is_shared=True,
+                operator_person_keys=("person-maya", "person-maya"),
+            )
+        )
+    assert "person-maya" not in str(exc_info.value)
+
 
 def test_accepted_entity_graph_round_trip_uses_opaque_refs_only() -> None:
     opaque = opaque_anchor_ref(

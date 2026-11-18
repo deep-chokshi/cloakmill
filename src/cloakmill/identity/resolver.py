@@ -44,12 +44,14 @@ from cloakmill.identity.mentions import (
     MentionEvidence,
     default_entity_kind_for_anchor,
     normalize_anchor_value,
+    retrieval_key,
     validate_directory_anchor,
     validate_mention_evidence,
 )
 from cloakmill.identity.metrics import ResolutionMetrics, build_resolution_metrics
 from cloakmill.identity.policy import (
     POLICY_VERSION,
+    REASON_COLOCATED_NEED_DIRECTORY,
     REASON_CONFLICTING_ACCOUNT_ID,
     REASON_CONFLICTING_EMAIL,
     REASON_CONFLICTING_EMPLOYEE_ID,
@@ -60,6 +62,7 @@ from cloakmill.identity.policy import (
     REASON_SINGLETON,
     REASON_STRONG_ANCHOR_MATCH,
     REASON_WEAK_FIRST_NAME,
+    RULE_COLOCATED_REVIEW,
     RULE_CONFLICTING_ANCHORS,
     RULE_DIRECTORY_BIND,
     RULE_KIND_SEPARATE,
@@ -68,6 +71,9 @@ from cloakmill.identity.policy import (
     RULE_STRONG_ANCHOR_MERGE,
     RULE_WEAK_NAME_REVIEW,
 )
+
+# Retrieval index key: (authority_or_star, kind.value, normalized_value)
+_RetrievalKey = tuple[str, str, str]
 
 _EXCLUSIVE_PERSON_ANCHORS = frozenset({AnchorKind.EMAIL, AnchorKind.EMPLOYEE_ID})
 _EXCLUSIVE_ACCOUNT_ANCHORS = frozenset({AnchorKind.ACCOUNT_ID})
@@ -233,44 +239,21 @@ class StrongAnchorIdentityResolver:
         for mention in strong_mentions:
             uf.add(mention.observation_id)
 
-        # Index strong mentions by (kind, value) — cleartext used only in-process.
-        by_anchor: dict[tuple[AnchorKind, str], list[str]] = defaultdict(list)
+        # Index strong mentions by authority-scoped retrieval key (cleartext in-process).
+        by_anchor: dict[_RetrievalKey, list[str]] = defaultdict(list)
         for mention in strong_mentions:
             anchor = mention.strong_anchor()
             if anchor is None:
                 continue
-            by_anchor[anchor].append(mention.observation_id)
+            key = retrieval_key(
+                anchor[0],
+                anchor[1],
+                authority_id=mention.authority_id,
+            )
+            by_anchor[key].append(mention.observation_id)
 
-        # Merge exact strong-anchor matches (same kind+value).
-        for _anchor_key, obs_list in sorted(
-            by_anchor.items(),
-            key=lambda item: (item[0][0].value, item[0][1]),
-        ):
-            if len(obs_list) < 2:
-                continue
-            root = obs_list[0]
-            for other in obs_list[1:]:
-                if not _compatible_for_merge(by_id[root], by_id[other], directory_index):
-                    continue
-                blocked = _exclusive_conflict(by_id, uf, root, other)
-                if blocked is not None:
-                    contradictions.append(blocked)
-                    decisions.append(
-                        _separate_decision(
-                            rule_id=RULE_CONFLICTING_ANCHORS,
-                            observation_ids=tuple(sorted({root, other})),
-                            reason_code=blocked.reason_code,
-                        )
-                    )
-                    continue
-                uf.union(root, other)
-
-        # Co-located strong anchors on the same part (structured record) may bind
-        # compatible kinds when no exclusive-anchor contradiction exists.
-        by_part: dict[str, list[str]] = defaultdict(list)
-        for mention in strong_mentions:
-            by_part[mention.part_id].append(mention.observation_id)
-        for _part_id, obs_list in sorted(by_part.items()):
+        # Merge exact strong-anchor matches (same retrieval key).
+        for _anchor_key, obs_list in sorted(by_anchor.items()):
             if len(obs_list) < 2:
                 continue
             root = obs_list[0]
@@ -303,7 +286,11 @@ class StrongAnchorIdentityResolver:
                 continue
             linked_obs: list[str] = []
             for anchor in anchors:
-                key = (anchor.anchor_kind, anchor.indexed_value())
+                key = retrieval_key(
+                    anchor.anchor_kind,
+                    anchor.indexed_value(),
+                    authority_id=anchor.authority_id,
+                )
                 linked_obs.extend(by_anchor.get(key, ()))
             linked_obs = sorted(set(linked_obs))
             if len(linked_obs) < 2:
@@ -356,15 +343,23 @@ class StrongAnchorIdentityResolver:
         for anchor in directory_entries:
             if not anchor.is_shared:
                 continue
-            mailbox_obs = by_anchor.get((anchor.anchor_kind, anchor.indexed_value()), [])
+            mailbox_key = retrieval_key(
+                anchor.anchor_kind,
+                anchor.indexed_value(),
+                authority_id=anchor.authority_id,
+            )
+            mailbox_obs = by_anchor.get(mailbox_key, [])
             operator_obs: list[str] = []
             for person_key in anchor.operator_person_keys:
                 for other in directory_entries:
                     if other.entity_key != person_key:
                         continue
-                    operator_obs.extend(
-                        by_anchor.get((other.anchor_kind, other.indexed_value()), [])
+                    other_key = retrieval_key(
+                        other.anchor_kind,
+                        other.indexed_value(),
+                        authority_id=other.authority_id,
                     )
+                    operator_obs.extend(by_anchor.get(other_key, []))
             if mailbox_obs and operator_obs:
                 mailbox_ref = opaque_directory_entity_ref(
                     entity_key=anchor.entity_key,
@@ -387,6 +382,54 @@ class StrongAnchorIdentityResolver:
                     )
                 )
 
+        # Same-part co-location is candidate evidence only — never an automatic
+        # cross-kind merge. Emit review for unresolved pairs after directory bind.
+        by_part: dict[str, list[str]] = defaultdict(list)
+        for mention in strong_mentions:
+            by_part[mention.part_id].append(mention.observation_id)
+        for _part_id, obs_list in sorted(by_part.items()):
+            if len(obs_list) < 2:
+                continue
+            sorted_obs = sorted(obs_list)
+            for index, left in enumerate(sorted_obs):
+                for right in sorted_obs[index + 1 :]:
+                    left_pair = by_id[left].strong_anchor()
+                    right_pair = by_id[right].strong_anchor()
+                    if left_pair is None or right_pair is None:
+                        continue
+                    if left_pair[0] is right_pair[0]:
+                        continue
+                    if not _compatible_for_merge(by_id[left], by_id[right], directory_index):
+                        continue
+                    if uf.find(left) == uf.find(right):
+                        continue
+                    pair_ids = tuple(sorted({left, right}))
+                    exceptions.append(
+                        ExceptionGroup(
+                            opaque_id=exception_opaque_id(
+                                reason_code=REASON_COLOCATED_NEED_DIRECTORY,
+                                observation_ids=pair_ids,
+                            ),
+                            reason_code=REASON_COLOCATED_NEED_DIRECTORY,
+                            observation_ids=pair_ids,
+                        )
+                    )
+                    decisions.append(
+                        IdentityDecision(
+                            opaque_id=decision_opaque_id(
+                                outcome=DecisionOutcome.REVIEW.value,
+                                rule_id=RULE_COLOCATED_REVIEW,
+                                observation_ids=pair_ids,
+                            ),
+                            outcome=DecisionOutcome.REVIEW,
+                            rule_id=RULE_COLOCATED_REVIEW,
+                            rule_version=POLICY_VERSION,
+                            observation_ids=pair_ids,
+                            reason_code=REASON_COLOCATED_NEED_DIRECTORY,
+                            evidence_refs=pair_ids,
+                        )
+                    )
+
         components = uf.components()
         entities: list[AcceptedEntity] = []
         obs_to_entity: dict[str, str] = {}
@@ -407,6 +450,14 @@ class StrongAnchorIdentityResolver:
                     "strong-anchor component missing seed anchor (internal invariant)"
                 )
             seed_kind, seed_value = seed_pair
+            seed_authority = next(
+                (
+                    mention.authority_id
+                    for mention in member_mentions
+                    if mention.strong_anchor() == seed_pair
+                ),
+                "default",
+            )
             directory_ref = _directory_entity_ref(
                 member_mentions,
                 directory_index,
@@ -419,6 +470,7 @@ class StrongAnchorIdentityResolver:
                 seed_value=seed_value,
                 namespace_id=namespace_id,
                 namespace_secret=secret,
+                authority_id=seed_authority,
             )
             entity = AcceptedEntity(
                 opaque_id=entity_id,
@@ -597,10 +649,14 @@ def _index_directory(
     *,
     namespace_id: str,
     namespace_secret: bytes,
-) -> dict[tuple[AnchorKind, str], DirectoryAnchor]:
-    index: dict[tuple[AnchorKind, str], DirectoryAnchor] = {}
+) -> dict[_RetrievalKey, DirectoryAnchor]:
+    index: dict[_RetrievalKey, DirectoryAnchor] = {}
     for anchor in directory:
-        key = (anchor.anchor_kind, anchor.indexed_value())
+        key = retrieval_key(
+            anchor.anchor_kind,
+            anchor.indexed_value(),
+            authority_id=anchor.authority_id,
+        )
         if key in index and index[key].entity_key != anchor.entity_key:
             left_ref = opaque_directory_entity_ref(
                 entity_key=index[key].entity_key,
@@ -654,7 +710,7 @@ def _weak_signal_refs(
 def _compatible_for_merge(
     left: MentionEvidence,
     right: MentionEvidence,
-    directory_index: Mapping[tuple[AnchorKind, str], DirectoryAnchor],
+    directory_index: Mapping[_RetrievalKey, DirectoryAnchor],
 ) -> bool:
     left_kind = _mention_entity_kind(left, directory_index)
     right_kind = _mention_entity_kind(right, directory_index)
@@ -663,12 +719,17 @@ def _compatible_for_merge(
 
 def _mention_entity_kind(
     mention: MentionEvidence,
-    directory_index: Mapping[tuple[AnchorKind, str], DirectoryAnchor],
+    directory_index: Mapping[_RetrievalKey, DirectoryAnchor],
 ) -> EntityKind:
     anchor = mention.strong_anchor()
     if anchor is None:
         return EntityKind.PERSON
-    directory = directory_index.get(anchor)
+    key = retrieval_key(
+        anchor[0],
+        anchor[1],
+        authority_id=mention.authority_id,
+    )
+    directory = directory_index.get(key)
     if directory is not None:
         return directory.entity_kind
     return default_entity_kind_for_anchor(anchor[0])
@@ -681,7 +742,7 @@ def _directory_kinds_compatible(anchors: Sequence[DirectoryAnchor]) -> bool:
 
 def _resolve_entity_kind(
     mentions: Sequence[MentionEvidence],
-    directory_index: Mapping[tuple[AnchorKind, str], DirectoryAnchor],
+    directory_index: Mapping[_RetrievalKey, DirectoryAnchor],
 ) -> EntityKind:
     kinds = {_mention_entity_kind(mention, directory_index) for mention in mentions}
     if len(kinds) == 1:
@@ -722,7 +783,7 @@ def _collect_strong_anchors(
 
 def _directory_entity_ref(
     mentions: Sequence[MentionEvidence],
-    directory_index: Mapping[tuple[AnchorKind, str], DirectoryAnchor],
+    directory_index: Mapping[_RetrievalKey, DirectoryAnchor],
     *,
     namespace_id: str,
     namespace_secret: bytes,
@@ -732,7 +793,9 @@ def _directory_entity_ref(
         pair = mention.strong_anchor()
         if pair is None:
             continue
-        entry = directory_index.get(pair)
+        entry = directory_index.get(
+            retrieval_key(pair[0], pair[1], authority_id=mention.authority_id)
+        )
         if entry is not None:
             keys.add(entry.entity_key)
     if len(keys) != 1:

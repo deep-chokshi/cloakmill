@@ -103,13 +103,20 @@ def entity_opaque_id(
     seed_value: str,
     namespace_id: str,
     namespace_secret: bytes,
+    authority_id: str = "default",
 ) -> str:
-    """Opaque entity id via keyed HMAC over the seed anchor (not unkeyed SHA-256)."""
+    """Opaque entity id via keyed HMAC over the seed anchor (not unkeyed SHA-256).
+
+    ``authority_id`` is included so source-local seeds under different authorities
+    cannot collide on the same opaque entity id.
+    """
     require_opaque_id(namespace_id, "namespace_id")
+    require_opaque_id(authority_id, "authority_id")
     digest = keyed_digest(
         namespace_secret,
         "entity",
         namespace_id,
+        authority_id,
         entity_kind.value,
         seed_anchor_kind.value,
         seed_value,

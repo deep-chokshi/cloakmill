@@ -26,11 +26,13 @@ from cloakmill.identity.ids import (
     require_namespace_secret,
 )
 from cloakmill.identity.mentions import (
+    LOCAL_ANCHOR_KINDS,
     STRONG_ENTITY_TYPES,
     DirectoryAnchor,
     MentionEvidence,
     anchor_kind_for_entity_type,
     normalize_anchor_value,
+    retrieval_key,
     validate_directory_anchor,
     validate_mention_evidence,
 )
@@ -39,6 +41,7 @@ from cloakmill.identity.policy import POLICY_VERSION
 from cloakmill.identity.resolver import ResolutionResult, StrongAnchorIdentityResolver
 
 __all__ = [
+    "LOCAL_ANCHOR_KINDS",
     "MIN_NAMESPACE_SECRET_LENGTH",
     "POLICY_VERSION",
     "STRONG_ENTITY_TYPES",
@@ -65,6 +68,7 @@ __all__ = [
     "opaque_directory_entity_ref",
     "opaque_weak_signal_ref",
     "require_namespace_secret",
+    "retrieval_key",
     "score_wrong_merges",
     "validate_accepted_entity",
     "validate_accepted_entity_graph",
