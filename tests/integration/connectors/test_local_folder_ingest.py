@@ -256,3 +256,136 @@ def test_jsonl_and_csv_extract_parts(tmp_path: Path, filename: str, media_type: 
     assert len(result.artifacts) == 1
     assert result.artifacts[0].media_type == media_type
     assert len(result.parts) >= 2
+
+
+def test_symlink_loop_is_quarantined_not_fatal(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    root.mkdir()
+    _write(root / "ok.txt", "inside\n")
+    loop = root / "loop.txt"
+    loop.symlink_to(loop)
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert by_path["loop.txt"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["loop.txt"].reason is AdmissionReason.SYMLINK_CYCLE
+
+
+def test_directory_symlink_cycle_is_quarantined_once(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    root.mkdir()
+    _write(root / "data.json", '{"email":"maya@acme.example"}\n')
+    (root / "l1").symlink_to(root)
+    (root / "l2").symlink_to(root)
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["data.json"].disposition is AdmissionDisposition.ADMITTED
+    assert by_path["l1"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["l1"].reason is AdmissionReason.SYMLINK_CYCLE
+    assert by_path["l2"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["l2"].reason is AdmissionReason.SYMLINK_CYCLE
+    # One admission only — cycles must not re-read data.json.
+    assert len(result.admitted_payloads) == 1
+    assert len(result.artifacts) == 1
+
+
+def test_deep_json_recursion_is_parse_failed(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    depth = 5000
+    _write(root / "deep.json", "[" * depth + "]" * depth)
+    _write(root / "ok.txt", "still-scanned\n")
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["deep.json"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["deep.json"].reason is AdmissionReason.PARSE_FAILED
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert result.artifacts and all(a.media_type == "text/plain" for a in result.artifacts)
+
+
+def test_symlink_into_excluded_target_is_excluded(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    _write(root / "secrets" / "token.txt", "not-a-real-secret\n")
+    root.mkdir(exist_ok=True)
+    (root / "alias.txt").symlink_to(root / "secrets" / "token.txt")
+
+    result = ingest_local_folder(
+        root,
+        access_scope="project:syn-demo",
+        exclusions=("secrets/**",),
+    )
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["secrets"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["alias.txt"].disposition is AdmissionDisposition.EXCLUDED
+    assert by_path["alias.txt"].reason is AdmissionReason.EXPLICIT_EXCLUSION
+    assert result.admitted_payloads == ()
+    assert result.artifacts == ()
+
+
+def test_empty_json_key_is_encoded_and_extracted(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    _write(
+        root / "empty-key.json",
+        json.dumps({"": {"email": "maya@acme.example", "ssn": "123-45-6789"}}),
+    )
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    assert len(result.artifacts) == 1
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["empty-key.json"].coverage_state is CoverageState.PROCESSED
+    paths = [
+        part.original_locator.path
+        for part in result.parts
+        if isinstance(part.original_locator, FieldPathLocator)
+    ]
+    assert ("$empty_key", "email") in paths
+    assert ("$empty_key", "ssn") in paths
+
+
+def test_ragged_csv_emits_positional_extra_cells(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    _write(
+        root / "ragged.csv",
+        "email,role\nmaya@acme.example,owner,123-45-6789\n",
+    )
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    assert len(result.artifacts) == 1
+    paths = [
+        part.original_locator.path
+        for part in result.parts
+        if isinstance(part.original_locator, FieldPathLocator)
+    ]
+    assert ("rows", 0, "email") in paths
+    assert ("rows", 0, "role") in paths
+    assert ("rows", 0, 2) in paths
+
+
+def test_backslash_filename_is_quarantined(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    root.mkdir()
+    spoofed = root / "secrets\\token.txt"
+    spoofed.write_text("not-a-real-secret\n", encoding="utf-8")
+    _write(root / "ok.txt", "fine\n")
+
+    result = ingest_local_folder(
+        root,
+        access_scope="project:syn-demo",
+        exclusions=("secrets/**",),
+    )
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["ok.txt"].disposition is AdmissionDisposition.ADMITTED
+    assert "secrets%5Ctoken.txt" in by_path
+    assert by_path["secrets%5Ctoken.txt"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["secrets%5Ctoken.txt"].reason is AdmissionReason.PATH_TRAVERSAL
+    assert "secrets/token.txt" not in by_path
+    assert all("\\" not in entry.relative_package_path for entry in result.inventory)
+
+
+def test_normalize_rejects_backslash_spoofing() -> None:
+    from cloakmill.connectors.admission import normalize_relative_package_path
+
+    with pytest.raises(ValueError, match="backslash"):
+        normalize_relative_package_path(r"secrets\token.txt")

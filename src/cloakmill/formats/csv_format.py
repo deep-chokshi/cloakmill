@@ -23,7 +23,11 @@ def extract_csv_parts(
     artifact_version_id: str,
     payload: bytes,
 ) -> CsvExtractResult:
-    """Parse UTF-8 CSV with a header row and emit per-cell structured parts."""
+    """Parse UTF-8 CSV with a header row and emit per-cell structured parts.
+
+    Cells beyond the header width are emitted with a positional integer path
+    segment so ragged rows cannot silently disappear from coverage.
+    """
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError:
@@ -45,16 +49,21 @@ def extract_csv_parts(
     parts: list[Part] = []
     ordinal = 0
     for row_index, row in enumerate(rows[1:]):
-        for col_index, column_name in enumerate(header):
+        width = max(len(header), len(row))
+        for col_index in range(width):
             if col_index >= len(row):
                 continue
             cell = row[col_index]
+            if col_index < len(header):
+                path: tuple[str | int, ...] = ("rows", row_index, header[col_index])
+            else:
+                path = ("rows", row_index, col_index)
             parts.append(
                 Part(
                     opaque_id=part_id_for(artifact_version_id, "csv", ordinal),
                     artifact_version_id=artifact_version_id,
                     surface_kind=SurfaceKind.STRUCTURED_FIELD,
-                    original_locator=FieldPathLocator(path=("rows", row_index, column_name)),
+                    original_locator=FieldPathLocator(path=path),
                     coverage_state=CoverageState.PROCESSED,
                     content_length=len(cell),
                 )

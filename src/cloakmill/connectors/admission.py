@@ -23,6 +23,7 @@ class AdmissionReason(StrEnum):
     OK = "ok"
     EXPLICIT_EXCLUSION = "explicit_exclusion"
     SYMLINK_ESCAPE = "symlink_escape"
+    SYMLINK_CYCLE = "symlink_cycle"
     PATH_TRAVERSAL = "path_traversal"
     MAX_DEPTH_EXCEEDED = "max_depth_exceeded"
     OVERSIZED = "oversized"
@@ -63,9 +64,20 @@ class AdmissionLimits:
         object.__setattr__(self, "allowed_suffixes", normalized)
 
 
+def encode_unsafe_relative_path(relative_path: str) -> str:
+    """Encode backslashes so quarantine rows do not invent path separators."""
+    return relative_path.replace("\\", "%5C")
+
+
 def normalize_relative_package_path(relative_path: str) -> str:
-    """Normalize to a posix relative package locator without drive or root."""
-    path = PurePosixPath(relative_path.replace("\\", "/"))
+    """Normalize to a posix relative package locator without drive or root.
+
+    Backslashes are rejected rather than rewritten into separators, so a POSIX
+    filename containing ``\\`` cannot spoof a multi-segment package path.
+    """
+    if "\\" in relative_path:
+        raise ValueError("relative package path must not contain backslash characters")
+    path = PurePosixPath(relative_path)
     if path.is_absolute() or path.anchor:
         raise ValueError("relative package path must not be absolute")
     parts = [part for part in path.parts if part not in ("", ".")]
@@ -97,6 +109,5 @@ def sha256_digest(payload: bytes) -> str:
 
 def opaque_id_for_relative_path(prefix: str, relative_path: str) -> str:
     """Deterministic opaque id from a relative package path (not absolute)."""
-    normalized = normalize_relative_package_path(relative_path)
-    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24]
+    digest = hashlib.sha256(relative_path.encode("utf-8")).hexdigest()[:24]
     return f"{prefix}-{digest}"

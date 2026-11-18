@@ -11,6 +11,7 @@ from cloakmill.connectors.admission import (
     AdmissionDisposition,
     AdmissionLimits,
     AdmissionReason,
+    encode_unsafe_relative_path,
     media_type_for_relative_path,
     normalize_relative_package_path,
     opaque_id_for_relative_path,
@@ -67,17 +68,16 @@ def _coverage_for(
 
 def _entry(
     *,
-    relative_path: str,
+    relative_package_path: str,
     disposition: AdmissionDisposition,
     reason: AdmissionReason,
     media_type: str | None = None,
     byte_size: int | None = None,
     digest: str | None = None,
 ) -> InventoryEntry:
-    normalized = normalize_relative_package_path(relative_path)
     return InventoryEntry(
-        opaque_id=opaque_id_for_relative_path("art", normalized),
-        relative_package_path=normalized,
+        opaque_id=opaque_id_for_relative_path("art", relative_package_path),
+        relative_package_path=relative_package_path,
         disposition=disposition,
         reason=reason,
         coverage_state=_coverage_for(disposition, reason),
@@ -91,8 +91,16 @@ def _is_under_root(path: Path, root: Path) -> bool:
     try:
         path.resolve(strict=False).relative_to(root)
         return True
-    except ValueError:
+    except (ValueError, OSError, RuntimeError):
         return False
+
+
+def _dir_identity(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_dev, stat.st_ino)
 
 
 def scan_local_folder(
@@ -116,8 +124,34 @@ def scan_local_folder(
 
     inventory: list[InventoryEntry] = []
     admitted: list[AdmittedPayload] = []
+    visited_dirs: set[tuple[int, int]] = set()
 
     def visit(directory: Path, depth: int) -> None:
+        identity = _dir_identity(directory)
+        if identity is None:
+            rel = directory.relative_to(root_path).as_posix()
+            if rel and rel != ".":
+                inventory.append(
+                    _entry(
+                        relative_package_path=rel,
+                        disposition=AdmissionDisposition.QUARANTINED,
+                        reason=AdmissionReason.UNREADABLE,
+                    )
+                )
+            return
+        if identity in visited_dirs:
+            rel = directory.relative_to(root_path).as_posix()
+            if rel and rel != ".":
+                inventory.append(
+                    _entry(
+                        relative_package_path=rel,
+                        disposition=AdmissionDisposition.QUARANTINED,
+                        reason=AdmissionReason.SYMLINK_CYCLE,
+                    )
+                )
+            return
+        visited_dirs.add(identity)
+
         try:
             children = sorted(directory.iterdir(), key=lambda item: item.name)
         except OSError:
@@ -125,7 +159,7 @@ def scan_local_folder(
             if rel and rel != ".":
                 inventory.append(
                     _entry(
-                        relative_path=rel,
+                        relative_package_path=rel,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.UNREADABLE,
                     )
@@ -134,12 +168,24 @@ def scan_local_folder(
 
         for child in children:
             try:
-                relative = child.relative_to(root_path).as_posix()
+                raw_relative = child.relative_to(root_path).as_posix()
             except ValueError:
-                # Should not happen for children under root; treat as traversal.
                 inventory.append(
                     _entry(
-                        relative_path=child.name,
+                        relative_package_path=encode_unsafe_relative_path(child.name),
+                        disposition=AdmissionDisposition.QUARANTINED,
+                        reason=AdmissionReason.PATH_TRAVERSAL,
+                    )
+                )
+                continue
+
+            # Quarantine backslash filenames before any rewrite/normalization.
+            if "\\" in raw_relative or any(
+                "\\" in part for part in child.relative_to(root_path).parts
+            ):
+                inventory.append(
+                    _entry(
+                        relative_package_path=encode_unsafe_relative_path(raw_relative),
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.PATH_TRAVERSAL,
                     )
@@ -147,11 +193,11 @@ def scan_local_folder(
                 continue
 
             try:
-                normalize_relative_package_path(relative)
+                relative = normalize_relative_package_path(raw_relative)
             except ValueError:
                 inventory.append(
                     _entry(
-                        relative_path=relative.replace("\\", "/"),
+                        relative_package_path=encode_unsafe_relative_path(raw_relative),
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.PATH_TRAVERSAL,
                     )
@@ -161,7 +207,7 @@ def scan_local_folder(
             if _matches_exclusion(relative, exclusion_patterns):
                 inventory.append(
                     _entry(
-                        relative_path=relative,
+                        relative_package_path=relative,
                         disposition=AdmissionDisposition.EXCLUDED,
                         reason=AdmissionReason.EXPLICIT_EXCLUSION,
                     )
@@ -171,45 +217,87 @@ def scan_local_folder(
             if depth > limits.max_depth:
                 inventory.append(
                     _entry(
-                        relative_path=relative,
+                        relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.MAX_DEPTH_EXCEEDED,
                     )
                 )
                 continue
 
-            # Symlink escape check before following.
+            resolved_target: Path | None = None
             if child.is_symlink():
                 try:
-                    target = child.resolve(strict=False)
-                except OSError:
+                    resolved_target = child.resolve(strict=False)
+                except (OSError, RuntimeError):
                     inventory.append(
                         _entry(
-                            relative_path=relative,
+                            relative_package_path=relative,
                             disposition=AdmissionDisposition.QUARANTINED,
-                            reason=AdmissionReason.UNREADABLE,
+                            reason=AdmissionReason.SYMLINK_CYCLE,
                         )
                     )
                     continue
-                if not _is_under_root(target, root_path):
+                if not _is_under_root(resolved_target, root_path):
                     inventory.append(
                         _entry(
-                            relative_path=relative,
+                            relative_package_path=relative,
                             disposition=AdmissionDisposition.QUARANTINED,
                             reason=AdmissionReason.SYMLINK_ESCAPE,
                         )
                     )
                     continue
+                try:
+                    target_rel_raw = resolved_target.relative_to(root_path).as_posix()
+                except ValueError:
+                    inventory.append(
+                        _entry(
+                            relative_package_path=relative,
+                            disposition=AdmissionDisposition.QUARANTINED,
+                            reason=AdmissionReason.SYMLINK_ESCAPE,
+                        )
+                    )
+                    continue
+                # Symlink to the ingest root itself is a cycle, not an empty package path.
+                if target_rel_raw not in ("", "."):
+                    try:
+                        target_relative = normalize_relative_package_path(target_rel_raw)
+                    except ValueError:
+                        inventory.append(
+                            _entry(
+                                relative_package_path=relative,
+                                disposition=AdmissionDisposition.QUARANTINED,
+                                reason=AdmissionReason.SYMLINK_ESCAPE,
+                            )
+                        )
+                        continue
+                    if _matches_exclusion(target_relative, exclusion_patterns):
+                        inventory.append(
+                            _entry(
+                                relative_package_path=relative,
+                                disposition=AdmissionDisposition.EXCLUDED,
+                                reason=AdmissionReason.EXPLICIT_EXCLUSION,
+                            )
+                        )
+                        continue
+                elif child.is_dir():
+                    inventory.append(
+                        _entry(
+                            relative_package_path=relative,
+                            disposition=AdmissionDisposition.QUARANTINED,
+                            reason=AdmissionReason.SYMLINK_CYCLE,
+                        )
+                    )
+                    continue
 
             if child.is_dir():
-                # Directory itself is not inventoried as an artifact; recurse.
+                # Directory symlink cycles are caught via visited_dirs on descent.
                 visit(child, depth + 1)
                 continue
 
             if not child.is_file():
                 inventory.append(
                     _entry(
-                        relative_path=relative,
+                        relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.NOT_A_FILE,
                     )
@@ -219,7 +307,7 @@ def scan_local_folder(
             if not suffix_is_allowed(relative, limits):
                 inventory.append(
                     _entry(
-                        relative_path=relative,
+                        relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.UNSUPPORTED_TYPE,
                         media_type=media_type_for_relative_path(relative),
@@ -232,7 +320,7 @@ def scan_local_folder(
             except OSError:
                 inventory.append(
                     _entry(
-                        relative_path=relative,
+                        relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.UNREADABLE,
                     )
@@ -242,7 +330,7 @@ def scan_local_folder(
             if size > limits.max_file_bytes:
                 inventory.append(
                     _entry(
-                        relative_path=relative,
+                        relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.OVERSIZED,
                         media_type=media_type_for_relative_path(relative),
@@ -256,7 +344,7 @@ def scan_local_folder(
             except OSError:
                 inventory.append(
                     _entry(
-                        relative_path=relative,
+                        relative_package_path=relative,
                         disposition=AdmissionDisposition.QUARANTINED,
                         reason=AdmissionReason.UNREADABLE,
                         media_type=media_type_for_relative_path(relative),
@@ -268,7 +356,7 @@ def scan_local_folder(
             digest = sha256_digest(payload)
             media_type = media_type_for_relative_path(relative) or "application/octet-stream"
             entry = _entry(
-                relative_path=relative,
+                relative_package_path=relative,
                 disposition=AdmissionDisposition.ADMITTED,
                 reason=AdmissionReason.OK,
                 media_type=media_type,
