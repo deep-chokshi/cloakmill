@@ -9,7 +9,10 @@ from cloakmill.domain.artifacts import (
     validate_private_integrity_digest,
 )
 from cloakmill.domain.enums import (
+    AnchorKind,
     CoverageState,
+    DecisionOutcome,
+    EntityKind,
     LocatorKind,
     ScoreKind,
     SurfaceKind,
@@ -34,9 +37,12 @@ from cloakmill.domain.observations import (
 from cloakmill.domain.serialize import dumps, from_jsonable, loads, loads_locator, to_jsonable
 
 __all__ = [
+    "AnchorKind",
     "ArtifactVersion",
     "CoverageState",
+    "DecisionOutcome",
     "DomainValidationError",
+    "EntityKind",
     "EvidenceRef",
     "FieldPathLocator",
     "LocatorKind",
