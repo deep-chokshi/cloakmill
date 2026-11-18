@@ -11,6 +11,7 @@ from cloakmill.validation.coverage import (
     CoverageLedger,
     compare_coverage,
     observed_ledger_from_candidates,
+    require_unique_artifact_ids,
     verify_observed_ledger,
 )
 from cloakmill.validation.findings import (
@@ -54,9 +55,11 @@ def validate_release_candidate(
     derived from candidate artifacts (caller-supplied ledgers are verified).
     """
     structure_ctx = structure if structure is not None else StructureContext()
+    # Reject duplicate artifact ids before any gate can collapse them away.
+    artifacts = require_unique_artifact_ids(candidate.artifacts)
     derived = observed_ledger_from_candidates(
         expected=candidate.expected_coverage,
-        candidates=candidate.artifacts,
+        candidates=artifacts,
     )
     tamper_findings: tuple[Finding, ...] = ()
     if candidate.observed_coverage is not None:
@@ -68,17 +71,17 @@ def validate_release_candidate(
     coverage_findings = compare_coverage(
         expected=candidate.expected_coverage,
         observed=derived,
-        candidate_artifacts=candidate.artifacts,
+        candidate_artifacts=artifacts,
     )
     coverage_findings = (*tamper_findings, *coverage_findings)
 
     privacy_findings = check_privacy(
-        candidates=candidate.artifacts,
+        candidates=artifacts,
         context=privacy,
         engine=engine,
     )
     structure_findings = check_structure(
-        candidates=candidate.artifacts,
+        candidates=artifacts,
         context=structure_ctx,
     )
 

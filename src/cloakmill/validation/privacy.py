@@ -16,6 +16,7 @@ from cloakmill.validation.findings import (
     CODE_PRIVACY_CANARY_DETECTED,
     CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
     CODE_PRIVACY_UNEXPECTED_IDENTIFIER,
+    CODE_PRIVACY_UNSCANNABLE_CANDIDATE,
     CODE_PRIVACY_UNSUPPORTED_KIND,
     Finding,
     GateKind,
@@ -125,11 +126,20 @@ def check_privacy(
         if artifact.excluded and not artifact.payload:
             continue
 
-        # Malformed candidates must not abort validation; structure gate owns
-        # CODE_STRUCTURE_REPARSE_FAILED. Literal/canary scan above already ran.
+        # Fail closed here: do not rely on structure/coverage to catch
+        # unscannable candidates (unsupported media, corrupt bytes, etc.).
+        # Literal/canary scan above already ran on raw payload bytes.
         try:
             surfaces = iter_candidate_surfaces(artifact)
         except ValidationInputError:
+            findings.append(
+                _privacy_finding(
+                    code=CODE_PRIVACY_UNSCANNABLE_CANDIDATE,
+                    artifact_version_id=artifact.artifact_version_id,
+                    detail_seed=f"unscannable:{artifact.artifact_version_id}",
+                    subject_extra="unscannable",
+                )
+            )
             continue
 
         # Post-deserialization surface scan catches JSON escapes etc.
