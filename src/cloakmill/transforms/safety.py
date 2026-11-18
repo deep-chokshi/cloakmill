@@ -15,15 +15,20 @@ from cloakmill.transforms.errors import UnsafeReplacementError
 # Spreadsheet / CSV formula markers (including tab/CR prefixes used by some tools).
 _FORMULA_PREFIX_RE = re.compile(r"^[\t\r\n ]*[=+\-@]")
 
-# Executable / template / SQL-shaped payloads that must never appear as replacements.
+# Executable / template / SQL / HTML-injection payloads that must never appear
+# as replacements (deny-list; synthetic catalog values are expected to be plain text).
 _UNSAFE_SUBSTRING_RE = re.compile(
     r"(?is)"
-    r"(?:<script\b|javascript:|data:text/html|"
+    r"(?:"
+    r"<script\b|javascript:|data:text/html|"
+    r"<(?:img|svg|iframe|object|embed|body|a)\b|"
+    r"\bon[a-z]+\s*=|"
     r"\{\{|\}\}|\$\{|<%|%>|"
     r"\b(?:drop|delete|insert|update|alter|exec|execute|union)\b\s+"
     r"(?:table|from|into|set|database|schema|sleep)\b|"
     r";\s*(?:drop|delete|insert|update|alter|exec)\b|"
-    r"--\s|/\*|\*/)"
+    r"--\s|/\*|\*/"
+    r")"
 )
 
 _NULL_BYTE = "\x00"

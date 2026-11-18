@@ -46,6 +46,8 @@ from cloakmill.transforms import (
 )
 from cloakmill.transforms.replacements import build_replacement_vault
 
+INT_NAMESPACE_SECRET = b"integration-transform-key!"
+
 
 def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
@@ -59,7 +61,7 @@ def _freeze_two_people():
             namespace_id=scope.namespace_id,
             key_version="nk.v1",
         ),
-        key_bytes=b"integration-transform-key!",
+        key_bytes=INT_NAMESPACE_SECRET,
     )
     graph = AcceptedEntityGraph(
         opaque_id="graph-int-xform-1",
@@ -218,6 +220,7 @@ def test_json_csv_text_replay_preserves_relationships_and_schema(
 
     plan_a = plan_patches(
         frozen=frozen,
+        namespace_secret=INT_NAMESPACE_SECRET,
         requests=requests,
         referential_rewrites=referential,
         artifact_scopes=scopes,
@@ -225,6 +228,7 @@ def test_json_csv_text_replay_preserves_relationships_and_schema(
     )
     plan_b = plan_patches(
         frozen=frozen,
+        namespace_secret=INT_NAMESPACE_SECRET,
         requests=requests,
         referential_rewrites=referential,
         artifact_scopes=scopes,
@@ -331,6 +335,7 @@ def test_exclude_artifact_is_not_copied_to_output() -> None:
     payload = b'{"blob":"secret"}\n'
     plan = plan_patches(
         frozen=frozen,
+        namespace_secret=INT_NAMESPACE_SECRET,
         requests=(
             PatchRequest(
                 request_id="exclude-bin",
@@ -362,6 +367,7 @@ def test_write_artifact_default_denies_unscoped_and_digest_mismatch() -> None:
     payload = b'{"owner_email":"maya@acme.example"}\n'
     plan = plan_patches(
         frozen=frozen,
+        namespace_secret=INT_NAMESPACE_SECRET,
         requests=(),
         artifact_scopes=(
             ArtifactScope(
@@ -411,6 +417,7 @@ def test_json_root_sentinel_does_not_collide_with_value_key() -> None:
 
     plan = plan_patches(
         frozen=frozen,
+        namespace_secret=INT_NAMESPACE_SECRET,
         requests=(
             PatchRequest(
                 request_id="obj-value",
@@ -532,6 +539,7 @@ def test_duplicate_csv_headers_fail_closed() -> None:
     frozen = _freeze_two_people()
     plan = plan_patches(
         frozen=frozen,
+        namespace_secret=INT_NAMESPACE_SECRET,
         requests=(
             PatchRequest(
                 request_id="dup-email",
@@ -564,6 +572,7 @@ def test_writer_refuses_injected_vault_mutation() -> None:
     payload = b"owner_email\nmaya@acme.example\n"
     plan = plan_patches(
         frozen=frozen,
+        namespace_secret=INT_NAMESPACE_SECRET,
         requests=(
             PatchRequest(
                 request_id="csv-owner-email",

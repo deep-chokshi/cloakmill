@@ -13,13 +13,13 @@ from dataclasses import dataclass
 
 from cloakmill.domain.artifacts import validate_private_integrity_digest
 from cloakmill.domain.enums import PolicyAction
+from cloakmill.domain.errors import DomainValidationError
 from cloakmill.domain.fields import require_opaque_id
 from cloakmill.domain.locators import FieldPathLocator, OriginalLocator, TextOffsetLocator
 from cloakmill.domain.mapping import (
     MappingSnapshot,
     PatchPlanEntry,
     validate_mapping_snapshot,
-    validate_mapping_snapshot_structure,
     validate_patch_plan_entry,
 )
 from cloakmill.identity.freeze import FrozenMappingBundle
@@ -113,23 +113,27 @@ def plan_patches(
     *,
     frozen: FrozenMappingBundle,
     requests: Sequence[PatchRequest],
+    namespace_secret: bytes,
     referential_rewrites: Sequence[ReferentialKeyRewrite] = (),
     artifact_scopes: Sequence[ArtifactScope] = (),
     writer_version: str = WRITER_VERSION,
-    namespace_secret: bytes | None = None,
 ) -> PatchPlan:
     """Build a deterministic patch plan from policy intents and frozen profiles.
 
-    Structure is always validated. When ``namespace_secret`` is provided, the
-    snapshot HMAC commitment is authenticated as well (F07 mapping integrity).
+    Requires ``namespace_secret`` and authenticates the frozen mapping snapshot
+    HMAC (same boundary as ``freeze_mapping`` / ``FrozenMappingStore.put``).
     """
     if not isinstance(frozen, FrozenMappingBundle):
         raise TransformError("plan_patches requires a FrozenMappingBundle")
+    if not isinstance(namespace_secret, bytes):
+        raise TransformError("plan_patches requires namespace_secret as bytes")
     snapshot = frozen.snapshot
-    if namespace_secret is None:
-        validate_mapping_snapshot_structure(snapshot)
-    else:
+    try:
         validate_mapping_snapshot(snapshot, namespace_secret=namespace_secret)
+    except DomainValidationError as exc:
+        raise TransformError(
+            f"frozen snapshot {snapshot.opaque_id!r} failed integrity authentication"
+        ) from exc
     if writer_version.strip() == "":
         raise TransformError("writer_version must be non-empty")
 

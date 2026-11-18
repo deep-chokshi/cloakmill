@@ -27,6 +27,8 @@ from cloakmill.transforms import (
     plan_patches,
 )
 
+UNIT_NAMESPACE_SECRET = b"unit-transform-key!!"
+
 
 def _frozen_bundle():
     scope = NamespaceScope("cust-t", "proj-t", "rcpt-t")
@@ -36,7 +38,7 @@ def _frozen_bundle():
             namespace_id=scope.namespace_id,
             key_version="nk.v1",
         ),
-        key_bytes=b"unit-transform-key!!",
+        key_bytes=UNIT_NAMESPACE_SECRET,
     )
     graph = AcceptedEntityGraph(
         opaque_id="graph-t-1",
@@ -77,6 +79,12 @@ def test_safe_replacement_rejects_formula_and_sql() -> None:
         assert_safe_replacement("{{constructor.constructor('return this')()}}")
     with pytest.raises(UnsafeReplacementError, match="NUL"):
         assert_safe_replacement("ok\x00bad")
+    with pytest.raises(UnsafeReplacementError, match="forbidden"):
+        assert_safe_replacement("<img src=x onerror=alert(1)>")
+    with pytest.raises(UnsafeReplacementError, match="forbidden"):
+        assert_safe_replacement("<svg onload=alert(1)>")
+    with pytest.raises(UnsafeReplacementError, match="forbidden"):
+        assert_safe_replacement('<iframe src="https://attacker.example/"></iframe>')
 
 
 def test_planner_prefers_longer_text_span_and_rejects_partial_overlap() -> None:
@@ -100,7 +108,12 @@ def test_planner_prefers_longer_text_span_and_rejects_partial_overlap() -> None:
         entity_id="ent-maya",
         attribute_key=ATTRIBUTE_EMAIL,
     )
-    plan = plan_patches(frozen=frozen, requests=(longer, contained), artifact_scopes=scopes)
+    plan = plan_patches(
+        frozen=frozen,
+        namespace_secret=UNIT_NAMESPACE_SECRET,
+        requests=(longer, contained),
+        artifact_scopes=scopes,
+    )
     assert len(plan.entries) == 1
     assert plan.entries[0].locator == longer.locator
 
@@ -123,7 +136,12 @@ def test_planner_prefers_longer_text_span_and_rejects_partial_overlap() -> None:
         attribute_key=ATTRIBUTE_EMAIL,
     )
     with pytest.raises(PatchConflictError, match="partial text-offset overlap"):
-        plan_patches(frozen=frozen, requests=(partial_a, partial_b), artifact_scopes=scopes)
+        plan_patches(
+            frozen=frozen,
+            namespace_secret=UNIT_NAMESPACE_SECRET,
+            requests=(partial_a, partial_b),
+            artifact_scopes=scopes,
+        )
 
 
 def test_planner_rejects_exclude_contained_in_replace_span() -> None:
@@ -147,7 +165,12 @@ def test_planner_rejects_exclude_contained_in_replace_span() -> None:
         action=PolicyAction.EXCLUDE,
     )
     with pytest.raises(PatchConflictError, match="contained text-offset patch conflicts"):
-        plan_patches(frozen=frozen, requests=(longer, exclude_inner), artifact_scopes=scopes)
+        plan_patches(
+            frozen=frozen,
+            namespace_secret=UNIT_NAMESPACE_SECRET,
+            requests=(longer, exclude_inner),
+            artifact_scopes=scopes,
+        )
 
 
 def test_planner_rejects_identical_text_span_conflicts() -> None:
@@ -170,7 +193,12 @@ def test_planner_rejects_identical_text_span_conflicts() -> None:
         action=PolicyAction.REMOVE,
     )
     with pytest.raises(PatchConflictError, match="conflicting patches for text span"):
-        plan_patches(frozen=frozen, requests=(replace, remove), artifact_scopes=scopes)
+        plan_patches(
+            frozen=frozen,
+            namespace_secret=UNIT_NAMESPACE_SECRET,
+            requests=(replace, remove),
+            artifact_scopes=scopes,
+        )
 
 
 def test_planner_rejects_conflicting_field_paths() -> None:
@@ -193,7 +221,12 @@ def test_planner_rejects_conflicting_field_paths() -> None:
         action=PolicyAction.REMOVE,
     )
     with pytest.raises(PatchConflictError, match="conflicting patches for field path"):
-        plan_patches(frozen=frozen, requests=(left, right), artifact_scopes=scopes)
+        plan_patches(
+            frozen=frozen,
+            namespace_secret=UNIT_NAMESPACE_SECRET,
+            requests=(left, right),
+            artifact_scopes=scopes,
+        )
 
 
 def test_inert_formula_token_rejected_during_planning() -> None:
@@ -209,6 +242,7 @@ def test_inert_formula_token_rejected_during_planning() -> None:
     with pytest.raises(UnsafeReplacementError):
         plan_patches(
             frozen=frozen,
+            namespace_secret=UNIT_NAMESPACE_SECRET,
             requests=(request,),
             artifact_scopes=(_scope("art-note-1"),),
         )
@@ -224,4 +258,34 @@ def test_planner_requires_artifact_scopes_for_requests() -> None:
         action=PolicyAction.REMOVE,
     )
     with pytest.raises(TransformError, match="not listed in artifact_scopes"):
-        plan_patches(frozen=frozen, requests=(request,), artifact_scopes=())
+        plan_patches(
+            frozen=frozen,
+            namespace_secret=UNIT_NAMESPACE_SECRET,
+            requests=(request,),
+            artifact_scopes=(),
+        )
+
+
+def test_planner_rejects_forged_private_integrity_digest() -> None:
+    """Structure-valid forged HMAC digests must not plan patches."""
+    from dataclasses import replace
+
+    from cloakmill.identity.freeze import FrozenMappingBundle
+
+    frozen = _frozen_bundle()
+    forged_snapshot = replace(
+        frozen.snapshot,
+        private_integrity_digest="hmac-sha256:" + ("ab" * 32),
+    )
+    forged = FrozenMappingBundle(
+        snapshot=forged_snapshot,
+        graph_version=frozen.graph_version,
+        profiles=frozen.profiles,
+    )
+    with pytest.raises(TransformError, match="integrity authentication"):
+        plan_patches(
+            frozen=forged,
+            namespace_secret=UNIT_NAMESPACE_SECRET,
+            requests=(),
+            artifact_scopes=(),
+        )
