@@ -61,9 +61,21 @@ class FrozenMappingBundle:
         raise AssignmentError(f"no frozen assignment for entity {entity_id!r}")
 
     def to_dict(self) -> dict[str, Any]:
+        """Release-safe export: mapping snapshot + graph version only (no profile vault)."""
+        return self.to_export_dict()
+
+    def to_export_dict(self) -> dict[str, Any]:
+        """Export payload safe for release manifests (profiles omitted)."""
         return {
             "snapshot": self.snapshot.to_dict(),
             "graph_version": self.graph_version.to_dict(),
+        }
+
+    def to_vault_dict(self) -> dict[str, Any]:
+        """Private vault payload: synthetic profiles keyed for offline assignment reuse."""
+        return {
+            "namespace_id": self.snapshot.namespace_id,
+            "mapping_snapshot_id": self.snapshot.opaque_id,
             "profiles": [profile.to_dict() for profile in self.profiles],
         }
 

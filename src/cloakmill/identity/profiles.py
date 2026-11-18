@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from cloakmill.domain.enums import EntityKind
@@ -88,13 +88,25 @@ class NamespaceKeyMaterial:
     """In-memory namespace key bytes. Never serialized into mapping snapshots."""
 
     key_ref: NamespaceKeyRef
-    key_bytes: bytes
+    key_bytes: bytes = field(repr=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.key_ref, NamespaceKeyRef):
             raise AssignmentError("key_ref must be a NamespaceKeyRef")
         if not isinstance(self.key_bytes, (bytes, bytearray)) or len(self.key_bytes) < 16:
             raise AssignmentError("key_bytes must be at least 16 bytes")
+        if isinstance(self.key_bytes, bytearray):
+            object.__setattr__(self, "key_bytes", bytes(self.key_bytes))
+
+    def __repr__(self) -> str:
+        return (
+            f"NamespaceKeyMaterial(key_ref={self.key_ref.opaque_id!r}, "
+            f"key_version={self.key_ref.key_version!r}, "
+            f"key_bytes=<redacted:{len(self.key_bytes)}B>)"
+        )
+
+    def __str__(self) -> str:
+        return repr(self)
 
 
 @dataclass(frozen=True, slots=True)

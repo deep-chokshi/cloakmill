@@ -6,9 +6,11 @@ namespace key material, source-to-synthetic value maps, or original PII.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
+from cloakmill.domain.artifacts import validate_private_integrity_digest
 from cloakmill.domain.enums import PolicyAction
 from cloakmill.domain.errors import DomainValidationError
 from cloakmill.domain.fields import require_non_empty_str, require_opaque_id
@@ -116,6 +118,7 @@ class MappingSnapshot:
     entity_graph_version_id: str
     policy_version: str
     namespace_key_ref: NamespaceKeyRef
+    private_integrity_digest: str
     assignments: tuple[MappingAssignment, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -126,6 +129,7 @@ class MappingSnapshot:
             "entity_graph_version_id": self.entity_graph_version_id,
             "policy_version": self.policy_version,
             "namespace_key_ref": self.namespace_key_ref.to_dict(),
+            "private_integrity_digest": self.private_integrity_digest,
             "assignments": [item.to_dict() for item in self.assignments],
         }
 
@@ -150,6 +154,7 @@ class MappingSnapshot:
             entity_graph_version_id=data.get("entity_graph_version_id", ""),
             policy_version=data.get("policy_version", ""),
             namespace_key_ref=key_ref,
+            private_integrity_digest=data.get("private_integrity_digest", ""),
             assignments=assignments,
         )
         validate_mapping_snapshot(snapshot)
@@ -208,6 +213,89 @@ class PatchPlanEntry:
         return entry
 
 
+def mapping_snapshot_commitment_material(
+    *,
+    snapshot_version: str,
+    namespace_id: str,
+    entity_graph_version_id: str,
+    policy_version: str,
+    namespace_key_ref: NamespaceKeyRef,
+    assignments: tuple[MappingAssignment, ...],
+) -> str:
+    """Canonical content covered by opaque_id and private_integrity_digest."""
+    assignment_parts = tuple(
+        f"{item.entity_id}:{item.profile_id}"
+        for item in sorted(assignments, key=lambda item: item.entity_id)
+    )
+    return "\0".join(
+        (
+            "mapping-snapshot-v1",
+            snapshot_version,
+            namespace_id,
+            entity_graph_version_id,
+            policy_version,
+            namespace_key_ref.opaque_id,
+            namespace_key_ref.namespace_id,
+            namespace_key_ref.key_version,
+            *assignment_parts,
+        )
+    )
+
+
+def compute_mapping_snapshot_commitment(
+    *,
+    snapshot_version: str,
+    namespace_id: str,
+    entity_graph_version_id: str,
+    policy_version: str,
+    namespace_key_ref: NamespaceKeyRef,
+    assignments: tuple[MappingAssignment, ...] = (),
+) -> tuple[str, str]:
+    """Return ``(opaque_id, private_integrity_digest)`` for snapshot content."""
+    material = mapping_snapshot_commitment_material(
+        snapshot_version=snapshot_version,
+        namespace_id=namespace_id,
+        entity_graph_version_id=entity_graph_version_id,
+        policy_version=policy_version,
+        namespace_key_ref=namespace_key_ref,
+        assignments=assignments,
+    )
+    full_hex = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    return f"map-{full_hex[:24]}", f"sha256:{full_hex}"
+
+
+def make_mapping_snapshot(
+    *,
+    snapshot_version: str,
+    namespace_id: str,
+    entity_graph_version_id: str,
+    policy_version: str,
+    namespace_key_ref: NamespaceKeyRef,
+    assignments: tuple[MappingAssignment, ...] = (),
+) -> MappingSnapshot:
+    """Build a validated snapshot with commitment fields derived from content."""
+    opaque_id, digest = compute_mapping_snapshot_commitment(
+        snapshot_version=snapshot_version,
+        namespace_id=namespace_id,
+        entity_graph_version_id=entity_graph_version_id,
+        policy_version=policy_version,
+        namespace_key_ref=namespace_key_ref,
+        assignments=assignments,
+    )
+    snapshot = MappingSnapshot(
+        opaque_id=opaque_id,
+        snapshot_version=snapshot_version,
+        namespace_id=namespace_id,
+        entity_graph_version_id=entity_graph_version_id,
+        policy_version=policy_version,
+        namespace_key_ref=namespace_key_ref,
+        private_integrity_digest=digest,
+        assignments=assignments,
+    )
+    validate_mapping_snapshot(snapshot)
+    return snapshot
+
+
 def validate_namespace_key_ref(ref: NamespaceKeyRef) -> None:
     require_opaque_id(ref.opaque_id, "opaque_id")
     require_opaque_id(ref.namespace_id, "namespace_id")
@@ -244,6 +332,7 @@ def validate_mapping_snapshot(snapshot: MappingSnapshot) -> None:
         raise DomainValidationError(
             "namespace_key_ref.namespace_id must match mapping snapshot namespace_id"
         )
+    validate_private_integrity_digest(snapshot.private_integrity_digest)
     seen_entities: set[str] = set()
     for assignment in snapshot.assignments:
         validate_mapping_assignment(assignment)
@@ -252,6 +341,21 @@ def validate_mapping_snapshot(snapshot: MappingSnapshot) -> None:
                 f"duplicate entity assignment in snapshot: {assignment.entity_id}"
             )
         seen_entities.add(assignment.entity_id)
+
+    expected_id, expected_digest = compute_mapping_snapshot_commitment(
+        snapshot_version=snapshot.snapshot_version,
+        namespace_id=snapshot.namespace_id,
+        entity_graph_version_id=snapshot.entity_graph_version_id,
+        policy_version=snapshot.policy_version,
+        namespace_key_ref=snapshot.namespace_key_ref,
+        assignments=snapshot.assignments,
+    )
+    if snapshot.opaque_id != expected_id:
+        raise DomainValidationError("mapping snapshot opaque_id does not match committed content")
+    if snapshot.private_integrity_digest != expected_digest:
+        raise DomainValidationError(
+            "mapping snapshot private_integrity_digest does not match committed content"
+        )
 
 
 def validate_patch_plan_entry(entry: PatchPlanEntry) -> None:
@@ -311,5 +415,6 @@ def mapping_snapshots_equal(left: MappingSnapshot, right: MappingSnapshot) -> bo
         and left.entity_graph_version_id == right.entity_graph_version_id
         and left.policy_version == right.policy_version
         and left.namespace_key_ref == right.namespace_key_ref
+        and left.private_integrity_digest == right.private_integrity_digest
         and left_assignments == right_assignments
     )

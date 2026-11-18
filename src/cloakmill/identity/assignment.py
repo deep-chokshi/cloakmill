@@ -11,7 +11,7 @@ from cloakmill.domain.mapping import (
     MappingAssignment,
     MappingSnapshot,
     NamespaceKeyRef,
-    validate_mapping_snapshot,
+    make_mapping_snapshot,
 )
 from cloakmill.identity.errors import AssignmentError, CollisionExhaustedError
 from cloakmill.identity.graph import (
@@ -196,13 +196,7 @@ class NamespaceScopedProfileAssigner:
 
 def build_mapping_snapshot(draft: MappingAssignmentDraft) -> MappingSnapshot:
     """Build a validated mapping snapshot from an assignment draft (not yet sealed)."""
-    snapshot = MappingSnapshot(
-        opaque_id=_snapshot_opaque_id(
-            namespace_id=draft.namespace.namespace_id,
-            snapshot_version=draft.snapshot_version,
-            graph_version_id=draft.graph_version.opaque_id,
-            assignments=draft.assignments,
-        ),
+    return make_mapping_snapshot(
         snapshot_version=draft.snapshot_version,
         namespace_id=draft.namespace.namespace_id,
         entity_graph_version_id=draft.graph_version.opaque_id,
@@ -210,8 +204,6 @@ def build_mapping_snapshot(draft: MappingAssignmentDraft) -> MappingSnapshot:
         namespace_key_ref=draft.key_ref,
         assignments=draft.assignments,
     )
-    validate_mapping_snapshot(snapshot)
-    return snapshot
 
 
 def _index_prior(
@@ -252,25 +244,3 @@ def _graph_version_id(graph: AcceptedEntityGraph) -> str:
     material = "\0".join((graph.namespace_id, graph.graph_version, *sorted(graph.entity_ids)))
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
     return f"egv-{digest}"
-
-
-def _snapshot_opaque_id(
-    *,
-    namespace_id: str,
-    snapshot_version: str,
-    graph_version_id: str,
-    assignments: tuple[MappingAssignment, ...],
-) -> str:
-    material = "\0".join(
-        (
-            namespace_id,
-            snapshot_version,
-            graph_version_id,
-            *(
-                f"{item.entity_id}:{item.profile_id}"
-                for item in sorted(assignments, key=lambda a: a.entity_id)
-            ),
-        )
-    )
-    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
-    return f"map-{digest}"
