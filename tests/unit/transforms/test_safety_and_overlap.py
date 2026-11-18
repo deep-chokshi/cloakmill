@@ -126,6 +126,30 @@ def test_planner_prefers_longer_text_span_and_rejects_partial_overlap() -> None:
         plan_patches(frozen=frozen, requests=(partial_a, partial_b), artifact_scopes=scopes)
 
 
+def test_planner_rejects_exclude_contained_in_replace_span() -> None:
+    """EXCLUDE inside a longer REPLACE must fail closed, not drop exclude intent."""
+    frozen = _frozen_bundle()
+    scopes = (_scope("art-note-1"),)
+    longer = PatchRequest(
+        request_id="req-replace-outer",
+        artifact_version_id="art-note-1",
+        part_id="part-body",
+        locator=TextOffsetLocator(unit=TextOffsetUnit.CODEPOINTS, start=0, end=20),
+        action=PolicyAction.REPLACE,
+        entity_id="ent-maya",
+        attribute_key=ATTRIBUTE_EMAIL,
+    )
+    exclude_inner = PatchRequest(
+        request_id="req-exclude-inner",
+        artifact_version_id="art-note-1",
+        part_id="part-body",
+        locator=TextOffsetLocator(unit=TextOffsetUnit.CODEPOINTS, start=5, end=10),
+        action=PolicyAction.EXCLUDE,
+    )
+    with pytest.raises(PatchConflictError, match="contained text-offset patch conflicts"):
+        plan_patches(frozen=frozen, requests=(longer, exclude_inner), artifact_scopes=scopes)
+
+
 def test_planner_rejects_identical_text_span_conflicts() -> None:
     frozen = _frozen_bundle()
     scopes = (_scope("art-note-1"),)

@@ -389,6 +389,14 @@ def _resolve_text_overlaps(requests: Sequence[PatchRequest]) -> list[PatchReques
                 skip_duplicate = True
                 break
             if _span_strictly_contains(prior, locator):
+                # Longer span already accepted. Drop a contained request only when
+                # the action intent matches (e.g. nested REPLACE of the same entity);
+                # differing actions (EXCLUDE inside REPLACE) must fail closed.
+                if not _requests_same_action_intent(prior_request, request):
+                    raise PatchConflictError(
+                        "contained text-offset patch conflicts with longer span "
+                        f"(requests {prior_request.request_id!r} vs {request.request_id!r})"
+                    )
                 skip_duplicate = True
                 break
             if _span_strictly_contains(locator, prior):
@@ -407,12 +415,19 @@ def _resolve_text_overlaps(requests: Sequence[PatchRequest]) -> list[PatchReques
     return accepted
 
 
-def _requests_semantically_equal(left: PatchRequest, right: PatchRequest) -> bool:
+def _requests_same_action_intent(left: PatchRequest, right: PatchRequest) -> bool:
+    """True when both requests express the same transform intent (ignore locator)."""
     return (
         left.action == right.action
         and left.entity_id == right.entity_id
         and left.attribute_key == right.attribute_key
         and left.inert_token == right.inert_token
+    )
+
+
+def _requests_semantically_equal(left: PatchRequest, right: PatchRequest) -> bool:
+    return (
+        _requests_same_action_intent(left, right)
         and left.artifact_version_id == right.artifact_version_id
         and left.part_id == right.part_id
         and left.locator == right.locator

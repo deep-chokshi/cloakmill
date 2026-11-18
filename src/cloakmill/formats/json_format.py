@@ -206,8 +206,17 @@ def extract_jsonl_parts(
         leaves: list[tuple[tuple[str | int, ...], str]] = []
         skipped = [0]
         try:
-            if isinstance(document, str):
-                leaves.append(((line_no, ROOT_SEGMENT), document))
+            # Every bare scalar line (string/number/bool/null) uses the root
+            # sentinel so writers accept the path; containers walk under line_no.
+            if not isinstance(document, dict | list):
+                text = _scalar_text(document)
+                if text is None:
+                    return JsonExtractResult(
+                        parts=(),
+                        parse_error="SkippedLeaves",
+                        skipped_leaves=1,
+                    )
+                leaves.append(((line_no, ROOT_SEGMENT), text))
             else:
                 collision = _walk_values(document, (line_no,), leaves, skipped)
                 if collision is not None:

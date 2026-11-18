@@ -475,6 +475,30 @@ def test_json_root_sentinel_does_not_collide_with_value_key() -> None:
     line = json.loads(patched.decode("utf-8").splitlines()[0])
     assert line == {"value": maya.email, "id": 1}
 
+    # Bare JSONL scalars (number/bool/null/string) all use (line, $root).
+    for raw in (b"12345\n", b"true\n", b"null\n", b'"maya@acme.example"\n'):
+        bare_parts = extract_jsonl_parts(artifact_version_id="art-bare", payload=raw)
+        assert bare_parts.parse_error is None
+        assert len(bare_parts.parts) == 1
+        assert tuple(bare_parts.parts[0].original_locator.path) == (0, ROOT_SEGMENT)
+        bare_out = write_jsonl_document(
+            original_payload=raw,
+            patches=(
+                PatchPlanEntry(
+                    opaque_id="patch-bare-1",
+                    mapping_snapshot_id=frozen.snapshot.opaque_id,
+                    artifact_version_id="art-bare",
+                    part_id=bare_parts.parts[0].opaque_id,
+                    locator=FieldPathLocator(path=(0, ROOT_SEGMENT)),
+                    action=PolicyAction.REPLACE,
+                    entity_id="ent-maya",
+                    replacement_ref="attr-test-1",
+                ),
+            ),
+            vault=vault,
+        )
+        assert json.loads(bare_out.decode("utf-8").splitlines()[0]) == maya.email
+
 
 def test_non_schema_and_person_keyed_surfaces_fail_closed() -> None:
     # Empty / $-prefixed / email-shaped keys are key-position content F08 cannot rewrite.
