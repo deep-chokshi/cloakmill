@@ -87,7 +87,7 @@ def test_resolve_assign_freeze_incremental_and_collision() -> None:
     )
     frozen_v1 = freeze_mapping(draft_v1)
     store = FrozenMappingStore()
-    store.put(frozen_v1)
+    store.put(frozen_v1, namespace_secret=TEST_NAMESPACE_SECRET)
 
     # Replay with identical inputs yields an equal frozen bundle.
     replay = freeze_mapping(
@@ -99,7 +99,7 @@ def test_resolve_assign_freeze_incremental_and_collision() -> None:
         )
     )
     assert frozen_bundles_equal(frozen_v1, replay)
-    store.put(replay)  # idempotent
+    store.put(replay, namespace_secret=TEST_NAMESPACE_SECRET)  # idempotent
 
     # Unique attrs must not collide across entities in the namespace.
     unique_emails = {
@@ -188,5 +188,5 @@ def test_resolve_assign_freeze_incremental_and_collision() -> None:
         )
         assert wrong not in graph_v2.entity_ids
 
-    store.put(frozen_v2)
+    store.put(frozen_v2, namespace_secret=TEST_NAMESPACE_SECRET)
     assert store.get(frozen_v2.snapshot.opaque_id) == frozen_v2

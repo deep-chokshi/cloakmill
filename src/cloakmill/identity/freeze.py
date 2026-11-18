@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from cloakmill.domain.errors import DomainValidationError
 from cloakmill.domain.mapping import (
     EntityGraphVersion,
     MappingAssignment,
@@ -101,10 +102,25 @@ class FrozenMappingStore:
     def __init__(self) -> None:
         self._by_snapshot_id: dict[str, FrozenMappingBundle] = {}
 
-    def put(self, bundle: FrozenMappingBundle) -> FrozenMappingBundle:
-        """Persist a frozen bundle. Idempotent for equal content; rejects mutation."""
+    def put(
+        self,
+        bundle: FrozenMappingBundle,
+        *,
+        namespace_secret: bytes,
+    ) -> FrozenMappingBundle:
+        """Persist a frozen bundle after HMAC authentication.
+
+        Idempotent for equal content; rejects mutation. Requires the namespace
+        secret so unauthenticated / forged snapshots cannot be ingested.
+        """
         if not isinstance(bundle, FrozenMappingBundle):
             raise FrozenMappingError("store only accepts FrozenMappingBundle")
+        try:
+            validate_mapping_snapshot(bundle.snapshot, namespace_secret=namespace_secret)
+        except DomainValidationError as exc:
+            raise FrozenMappingError(
+                f"frozen snapshot {bundle.snapshot.opaque_id!r} failed integrity authentication"
+            ) from exc
         existing = self._by_snapshot_id.get(bundle.snapshot.opaque_id)
         if existing is not None:
             if not frozen_bundles_equal(existing, bundle):

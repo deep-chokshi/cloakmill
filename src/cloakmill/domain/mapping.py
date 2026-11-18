@@ -413,7 +413,10 @@ def validate_mapping_snapshot_structure(snapshot: MappingSnapshot) -> None:
         namespace_key_ref=snapshot.namespace_key_ref,
         assignments=snapshot.assignments,
     )
-    if snapshot.opaque_id != expected_id:
+    if not hmac.compare_digest(
+        snapshot.opaque_id.encode("utf-8"),
+        expected_id.encode("utf-8"),
+    ):
         raise DomainValidationError("mapping snapshot opaque_id does not match committed content")
 
 
@@ -429,7 +432,10 @@ def validate_mapping_snapshot(snapshot: MappingSnapshot, *, namespace_secret: by
         assignments=snapshot.assignments,
         namespace_secret=namespace_secret,
     )
-    if snapshot.private_integrity_digest != expected_digest:
+    if not hmac.compare_digest(
+        snapshot.private_integrity_digest.encode("utf-8"),
+        expected_digest.encode("utf-8"),
+    ):
         raise DomainValidationError(
             "mapping snapshot private_integrity_digest does not match committed content"
         )
