@@ -369,6 +369,53 @@ def test_empty_json_key_is_encoded_and_extracted(tmp_path: Path) -> None:
     ]
     assert ("$empty_key", "email") in paths
     assert ("$empty_key", "ssn") in paths
+    assert ("$key", 0) in paths
+    assert ("$key", "$empty_key", 0) in paths
+    assert ("$key", "$empty_key", 1) in paths
+
+
+def test_identifier_keyed_json_emits_key_parts(tmp_path: Path) -> None:
+    """Object keys that carry identifiers must be coverage Parts, not path-only."""
+    root = tmp_path / "pkg"
+    _write(
+        root / "keyed.json",
+        json.dumps(
+            {
+                "users": {"maya@acme.example": {"role": "owner"}},
+                "ssn_index": {"123-45-6789": "Maya Shah"},
+            }
+        ),
+    )
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    assert len(result.artifacts) == 1
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["keyed.json"].coverage_state is CoverageState.PROCESSED
+    key_parts = {
+        part.original_locator.path: part.content_length
+        for part in result.parts
+        if isinstance(part.original_locator, FieldPathLocator)
+        and part.original_locator.path
+        and part.original_locator.path[0] == "$key"
+    }
+    # Sorted dict walk: ssn_index before users at root; email before nested leaves.
+    assert ("$key", 0) in key_parts  # "ssn_index"
+    assert ("$key", 1) in key_parts  # "users"
+    assert key_parts[("$key", 0)] == len("ssn_index")
+    assert key_parts[("$key", 1)] == len("users")
+    assert ("$key", "ssn_index", 0) in key_parts
+    assert key_parts[("$key", "ssn_index", 0)] == len("123-45-6789")
+    assert ("$key", "users", 0) in key_parts
+    assert key_parts[("$key", "users", 0)] == len("maya@acme.example")
+    leaf_paths = {
+        part.original_locator.path
+        for part in result.parts
+        if isinstance(part.original_locator, FieldPathLocator)
+        and part.original_locator.path
+        and part.original_locator.path[0] != "$key"
+    }
+    assert ("ssn_index", "123-45-6789") in leaf_paths
+    assert ("users", "maya@acme.example", "role") in leaf_paths
 
 
 def test_ragged_csv_emits_positional_extra_cells(tmp_path: Path) -> None:

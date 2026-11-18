@@ -14,6 +14,8 @@ from cloakmill.formats.text_format import ExtractedParts
 
 # FieldPathLocator rejects empty string segments; encode JSON "" keys explicitly.
 EMPTY_KEY_SEGMENT = "$empty_key"
+# Locator prefix for object-key surfaces so key text is detectable coverage.
+KEY_SURFACE_PREFIX = "$key"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,9 +48,10 @@ def _walk_values(
     value: Any,
     path: tuple[str | int, ...],
     out: list[tuple[tuple[str | int, ...], str]],
+    keys: list[tuple[tuple[str | int, ...], str]],
     skipped: list[int],
 ) -> None:
-    """Walk JSON values, emitting stringable leaves; count anything dropped."""
+    """Walk JSON values, emitting stringable leaves and object keys; count drops."""
     text = _scalar_text(value) if not isinstance(value, dict | list) else None
     if text is not None:
         if path:
@@ -58,15 +61,17 @@ def _walk_values(
         return
     if isinstance(value, list):
         for index, item in enumerate(value):
-            _walk_values(item, (*path, index), out, skipped)
+            _walk_values(item, (*path, index), out, keys, skipped)
         return
     if isinstance(value, dict):
-        for key in sorted(value, key=lambda item: str(item)):
+        for key_index, key in enumerate(sorted(value, key=lambda item: str(item))):
             encoded = _encode_key(key)
             if encoded is None:
                 skipped[0] += 1
                 continue
-            _walk_values(value[key], (*path, encoded), out, skipped)
+            # Track key text as a surface so identifier-keyed objects are covered.
+            keys.append(((KEY_SURFACE_PREFIX, *path, key_index), key))
+            _walk_values(value[key], (*path, encoded), out, keys, skipped)
         return
     skipped[0] += 1
 
@@ -107,12 +112,13 @@ def extract_json_parts(
         return JsonExtractResult(parts=(), parse_error=type(exc).__name__)
 
     leaves: list[tuple[tuple[str | int, ...], str]] = []
+    keys: list[tuple[tuple[str | int, ...], str]] = []
     skipped = [0]
     try:
         if isinstance(document, str):
             leaves.append((("value",), document))
         else:
-            _walk_values(document, (), leaves, skipped)
+            _walk_values(document, (), leaves, keys, skipped)
     except RecursionError:
         return JsonExtractResult(parts=(), parse_error="RecursionError")
 
@@ -123,9 +129,11 @@ def extract_json_parts(
             skipped_leaves=skipped[0],
         )
 
+    # Key surfaces first so ordinals stay stable relative to leaf-only extracts.
+    surfaces = [*keys, *leaves]
     parts = _parts_from_leaves(
         artifact_version_id=artifact_version_id,
-        leaves=leaves,
+        leaves=surfaces,
     )
     return JsonExtractResult(parts=tuple(parts), skipped_leaves=0)
 
@@ -155,12 +163,13 @@ def extract_jsonl_parts(
         except json.JSONDecodeError:
             return JsonExtractResult(parts=(), parse_error="JSONDecodeError")
         leaves: list[tuple[tuple[str | int, ...], str]] = []
+        keys: list[tuple[tuple[str | int, ...], str]] = []
         skipped = [0]
         try:
             if isinstance(document, str):
                 leaves.append(((line_no, "value"), document))
             else:
-                _walk_values(document, (line_no,), leaves, skipped)
+                _walk_values(document, (line_no,), leaves, keys, skipped)
         except RecursionError:
             return JsonExtractResult(parts=(), parse_error="RecursionError")
         total_skipped += skipped[0]
@@ -170,9 +179,10 @@ def extract_jsonl_parts(
                 parse_error="SkippedLeaves",
                 skipped_leaves=total_skipped,
             )
+        surfaces = [*keys, *leaves]
         batch = _parts_from_leaves(
             artifact_version_id=artifact_version_id,
-            leaves=leaves,
+            leaves=surfaces,
             index_offset=ordinal,
         )
         ordinal += len(batch)
