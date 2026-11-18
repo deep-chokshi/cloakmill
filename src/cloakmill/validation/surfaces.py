@@ -13,7 +13,11 @@ from cloakmill.domain.artifacts import Part
 from cloakmill.domain.enums import CoverageState, SurfaceKind, TextOffsetUnit
 from cloakmill.domain.locators import FieldPathLocator, TextOffsetLocator
 from cloakmill.formats.common import part_id_for
-from cloakmill.formats.json_format import EMPTY_KEY_SEGMENT
+from cloakmill.formats.json_format import (
+    ROOT_SEGMENT,
+    decode_field_key,
+    encode_field_key,
+)
 from cloakmill.validation.coverage import CandidateArtifact
 from cloakmill.validation.errors import ValidationInputError
 
@@ -106,7 +110,12 @@ def _json_surfaces(artifact: CandidateArtifact) -> Iterator[CandidateSurface]:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValidationInputError(f"candidate JSON reparse failed: {type(exc).__name__}") from exc
     leaves: list[tuple[tuple[str | int, ...], str]] = []
-    _walk_json(document, (), leaves)
+    if isinstance(document, str):
+        leaves.append(((ROOT_SEGMENT,), document))
+    else:
+        collision = _walk_json(document, (), leaves)
+        if collision is not None:
+            raise ValidationInputError(f"candidate JSON reparse failed: {collision}")
     for ordinal, (path, text) in enumerate(leaves):
         part = Part(
             opaque_id=part_id_for(artifact.artifact_version_id, "val-json", ordinal),
@@ -140,7 +149,12 @@ def _jsonl_surfaces(artifact: CandidateArtifact) -> Iterator[CandidateSurface]:
         except json.JSONDecodeError as exc:
             raise ValidationInputError("candidate JSONL reparse failed: JSONDecodeError") from exc
         leaves: list[tuple[tuple[str | int, ...], str]] = []
-        _walk_json(document, (line_no,), leaves)
+        if isinstance(document, str):
+            leaves.append(((line_no, ROOT_SEGMENT), document))
+        else:
+            collision = _walk_json(document, (line_no,), leaves)
+            if collision is not None:
+                raise ValidationInputError(f"candidate JSONL reparse failed: {collision}")
         for path, value in leaves:
             part = Part(
                 opaque_id=part_id_for(artifact.artifact_version_id, "val-jsonl", ordinal),
@@ -173,7 +187,7 @@ def _csv_surfaces(artifact: CandidateArtifact) -> Iterator[CandidateSurface]:
     if not rows:
         return
     header = rows[0]
-    if not header or any(name.strip() == "" for name in header):
+    if not header or any(name.strip() == "" for name in header) or len(set(header)) != len(header):
         raise ValidationInputError("candidate CSV reparse failed: InvalidHeader")
     ordinal = 0
     for row_index, row in enumerate(rows[1:]):
@@ -236,32 +250,35 @@ def _walk_json(
     value: Any,
     path: tuple[str | int, ...],
     out: list[tuple[tuple[str | int, ...], str]],
-) -> None:
+) -> str | None:
+    """Walk JSON values; return an error code on encoded-key collision."""
     text = _scalar_text(value) if not isinstance(value, dict | list) else None
     if text is not None:
         if path:
             out.append((path, text))
         elif text != "":
-            out.append((("value",), text))
-        return
+            out.append(((ROOT_SEGMENT,), text))
+        return None
     if isinstance(value, list):
         for index, item in enumerate(value):
-            _walk_json(item, (*path, index), out)
-        return
+            error = _walk_json(item, (*path, index), out)
+            if error is not None:
+                return error
+        return None
     if isinstance(value, dict):
+        seen_encoded: set[str] = set()
         for key in sorted(value, key=lambda item: str(item)):
-            encoded = _encode_key(key)
+            encoded = encode_field_key(key)
             if encoded is None:
                 continue
-            _walk_json(value[key], (*path, encoded), out)
-
-
-def _encode_key(key: object) -> str | None:
-    if not isinstance(key, str):
+            if encoded == ROOT_SEGMENT or encoded in seen_encoded:
+                return "EncodedKeyCollision"
+            seen_encoded.add(encoded)
+            error = _walk_json(value[key], (*path, encoded), out)
+            if error is not None:
+                return error
         return None
-    if key == "":
-        return EMPTY_KEY_SEGMENT
-    return key
+    return None
 
 
 def _scalar_text(value: object) -> str | None:
@@ -277,6 +294,8 @@ def _scalar_text(value: object) -> str | None:
 
 
 def _scalar_at_path(document: Any, path: tuple[str | int, ...]) -> str | None:
+    if path == (ROOT_SEGMENT,):
+        return _scalar_text(document)
     current: Any = document
     for segment in path:
         if isinstance(segment, int):
@@ -284,7 +303,9 @@ def _scalar_at_path(document: Any, path: tuple[str | int, ...]) -> str | None:
                 return None
             current = current[segment]
             continue
-        key = "" if segment == EMPTY_KEY_SEGMENT else segment
+        if not isinstance(segment, str):
+            return None
+        key = decode_field_key(segment)
         if not isinstance(current, dict) or key not in current:
             return None
         current = current[key]

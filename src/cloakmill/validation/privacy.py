@@ -9,6 +9,7 @@ from cloakmill.detection.engine import DiscoveryEngine, PartInput
 from cloakmill.detection.recognizers import build_default_catalog
 from cloakmill.domain.locators import TextOffsetLocator
 from cloakmill.validation.coverage import CandidateArtifact
+from cloakmill.validation.errors import ValidationInputError
 from cloakmill.validation.findings import (
     CODE_PRIVACY_CANARY_DETECTED,
     CODE_PRIVACY_RESIDUAL_KNOWN_SOURCE,
@@ -95,7 +96,12 @@ def check_privacy(
             )
         )
 
-        surfaces = iter_candidate_surfaces(artifact)
+        # Malformed candidates must not abort validation; structure gate owns
+        # CODE_STRUCTURE_REPARSE_FAILED. Continue literal/canary checks above.
+        try:
+            surfaces = iter_candidate_surfaces(artifact)
+        except ValidationInputError:
+            continue
         findings.extend(
             _independent_rule_scan(
                 surfaces=surfaces,
