@@ -196,6 +196,48 @@ def test_duplicate_json_object_keys_fail_closed(tmp_path: Path) -> None:
     assert result.admitted_payloads == ()
 
 
+def test_json_dollar_keys_escape_sentinel_collisions(tmp_path: Path) -> None:
+    """Empty-key sentinel and $lit: escape keep locator paths injective."""
+    root = tmp_path / "pkg"
+    _write(
+        root / "sentinels.json",
+        json.dumps({"": "A", "$empty_key": "B", "$key": ["maya@acme.example"]}),
+    )
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["sentinels.json"].coverage_state is CoverageState.PROCESSED
+    paths = [
+        part.original_locator.path
+        for part in result.parts
+        if isinstance(part.original_locator, FieldPathLocator)
+    ]
+    assert ("$empty_key",) in paths  # empty-key leaf "A"
+    assert ("$lit:$empty_key",) in paths  # literal "$empty_key" leaf "B"
+    assert ("$lit:$key", 0) in paths  # array element under literal "$key"
+    assert ("$key", 0) in paths  # key-surface for ""
+    assert paths.count(("$empty_key",)) == 1
+    assert paths.count(("$key", 0)) == 1
+    assert len(paths) == len(set(paths))
+
+
+def test_duplicate_csv_headers_fail_closed(tmp_path: Path) -> None:
+    root = tmp_path / "pkg"
+    _write(
+        root / "dup.csv",
+        "email,role,email\nvictim@acme.example,owner,hidden@acme.example\n",
+    )
+
+    result = ingest_local_folder(root, access_scope="project:syn-demo")
+    by_path = {entry.relative_package_path: entry for entry in result.inventory}
+    assert by_path["dup.csv"].disposition is AdmissionDisposition.QUARANTINED
+    assert by_path["dup.csv"].reason is AdmissionReason.PARSE_FAILED
+    assert by_path["dup.csv"].coverage_state is CoverageState.FAILED
+    assert result.artifacts == ()
+    assert result.parts == ()
+    assert result.admitted_payloads == ()
+
+
 def test_release_facing_structures_omit_absolute_paths(tmp_path: Path) -> None:
     root = tmp_path / "pkg"
     _synthetic_tree(root)

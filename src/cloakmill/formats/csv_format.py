@@ -47,23 +47,37 @@ def extract_csv_parts(
     header = rows[0]
     if not header or any(name.strip() == "" for name in header):
         return CsvExtractResult(parts=(), parse_error="InvalidHeader")
+    # Duplicate header names would collide FieldPathLocator paths (last-wins shadow).
+    if len(set(header)) != len(header):
+        return CsvExtractResult(parts=(), parse_error="DuplicateHeader")
 
     parts: list[Part] = []
     ordinal = 0
+    seen_paths: set[tuple[str | int, ...]] = set()
 
-    # Track header cells as surfaces so headerless first-row data is not dropped.
-    for col_index, name in enumerate(header):
+    def _emit(path: tuple[str | int, ...], content_length: int) -> str | None:
+        nonlocal ordinal
+        if path in seen_paths:
+            return "LocatorCollision"
+        seen_paths.add(path)
         parts.append(
             Part(
                 opaque_id=part_id_for(artifact_version_id, "csv", ordinal),
                 artifact_version_id=artifact_version_id,
                 surface_kind=SurfaceKind.STRUCTURED_FIELD,
-                original_locator=FieldPathLocator(path=("header", col_index)),
+                original_locator=FieldPathLocator(path=path),
                 coverage_state=CoverageState.PROCESSED,
-                content_length=len(name),
+                content_length=content_length,
             )
         )
         ordinal += 1
+        return None
+
+    # Track header cells as surfaces so headerless first-row data is not dropped.
+    for col_index, name in enumerate(header):
+        error = _emit(("header", col_index), len(name))
+        if error is not None:
+            return CsvExtractResult(parts=(), parse_error=error)
 
     for row_index, row in enumerate(rows[1:]):
         width = max(len(header), len(row))
@@ -75,15 +89,7 @@ def extract_csv_parts(
                 path: tuple[str | int, ...] = ("rows", row_index, header[col_index])
             else:
                 path = ("rows", row_index, col_index)
-            parts.append(
-                Part(
-                    opaque_id=part_id_for(artifact_version_id, "csv", ordinal),
-                    artifact_version_id=artifact_version_id,
-                    surface_kind=SurfaceKind.STRUCTURED_FIELD,
-                    original_locator=FieldPathLocator(path=path),
-                    coverage_state=CoverageState.PROCESSED,
-                    content_length=len(cell),
-                )
-            )
-            ordinal += 1
+            error = _emit(path, len(cell))
+            if error is not None:
+                return CsvExtractResult(parts=(), parse_error=error)
     return CsvExtractResult(parts=tuple(parts))

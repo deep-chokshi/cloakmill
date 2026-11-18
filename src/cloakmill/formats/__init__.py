@@ -2,11 +2,22 @@
 
 from cloakmill.formats.csv_format import extract_csv_parts
 from cloakmill.formats.extract import FormatExtractResult, extract_parts_for_media_type
-from cloakmill.formats.json_format import extract_json_parts, extract_jsonl_parts
+from cloakmill.formats.json_format import (
+    EMPTY_KEY_SEGMENT,
+    KEY_SURFACE_PREFIX,
+    LITERAL_KEY_PREFIX,
+    encode_field_key,
+    extract_json_parts,
+    extract_jsonl_parts,
+)
 from cloakmill.formats.text_format import extract_text_parts
 
 __all__ = [
+    "EMPTY_KEY_SEGMENT",
+    "KEY_SURFACE_PREFIX",
+    "LITERAL_KEY_PREFIX",
     "FormatExtractResult",
+    "encode_field_key",
     "extract_csv_parts",
     "extract_json_parts",
     "extract_jsonl_parts",
