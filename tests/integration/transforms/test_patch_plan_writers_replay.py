@@ -13,7 +13,17 @@ import pytest
 from cloakmill.domain import EntityKind, NamespaceKeyRef, PolicyAction
 from cloakmill.domain.enums import TextOffsetUnit
 from cloakmill.domain.locators import FieldPathLocator, TextOffsetLocator
-from cloakmill.formats import extract_parts_for_media_type, write_artifact
+from cloakmill.formats import (
+    EMPTY_KEY_SEGMENT,
+    LITERAL_KEY_PREFIX,
+    ROOT_SEGMENT,
+    extract_csv_parts,
+    extract_json_parts,
+    extract_jsonl_parts,
+    extract_parts_for_media_type,
+    write_artifact,
+)
+from cloakmill.formats.json_writer import write_json_document, write_jsonl_document
 from cloakmill.identity import (
     AcceptedEntity,
     AcceptedEntityGraph,
@@ -26,11 +36,15 @@ from cloakmill.transforms import (
     ATTRIBUTE_EMAIL,
     ATTRIBUTE_EMPLOYEE_ID,
     WRITER_VERSION,
+    ArtifactScope,
     PatchRequest,
     ReferentialKeyRewrite,
     UnsafeReplacementError,
+    WriterError,
+    content_digest_sha256,
     plan_patches,
 )
+from cloakmill.transforms.replacements import build_replacement_vault
 
 
 def _sha256(payload: bytes) -> str:
@@ -75,6 +89,16 @@ def _freeze_two_people():
     return bundle
 
 
+def _scopes_for(originals: dict[str, tuple[bytes, str]]) -> tuple[ArtifactScope, ...]:
+    return tuple(
+        ArtifactScope(
+            artifact_version_id=art,
+            content_digest=content_digest_sha256(payload),
+        )
+        for art, (payload, _media) in originals.items()
+    )
+
+
 def test_json_csv_text_replay_preserves_relationships_and_schema(
     tmp_path: Path,
 ) -> None:
@@ -98,7 +122,6 @@ def test_json_csv_text_replay_preserves_relationships_and_schema(
     csv_art = "art-csv-1"
     text_art = "art-text-1"
 
-    # Prove extractors still emit the F04 field-path model.
     json_parts = extract_parts_for_media_type(
         artifact_version_id=json_art,
         media_type="application/json",
@@ -186,30 +209,33 @@ def test_json_csv_text_replay_preserves_relationships_and_schema(
         ),
     )
 
+    originals = {
+        json_art: (json_original, "application/json"),
+        csv_art: (csv_original, "text/csv"),
+        text_art: (text_original, "text/plain"),
+    }
+    scopes = _scopes_for(originals)
+
     plan_a = plan_patches(
         frozen=frozen,
         requests=requests,
         referential_rewrites=referential,
+        artifact_scopes=scopes,
         writer_version=WRITER_VERSION,
     )
     plan_b = plan_patches(
         frozen=frozen,
         requests=requests,
         referential_rewrites=referential,
+        artifact_scopes=scopes,
         writer_version=WRITER_VERSION,
     )
     assert plan_a.entries == plan_b.entries
     assert dict(plan_a.vault.values) == dict(plan_b.vault.values)
     assert plan_a.writer_version == WRITER_VERSION
 
-    originals = {
-        json_art: (json_original, "application/json"),
-        csv_art: (csv_original, "text/csv"),
-        text_art: (text_original, "text/plain"),
-    }
     original_digests = {art: _sha256(payload) for art, (payload, _) in originals.items()}
 
-    # Write to separate paths; keep originals on disk untouched.
     source_dir = tmp_path / "source"
     out_dir = tmp_path / "out"
     source_dir.mkdir()
@@ -244,13 +270,11 @@ def test_json_csv_text_replay_preserves_relationships_and_schema(
     }
     assert written_a == written_b
 
-    # Originals untouched on disk and in memory digests.
     for art, path in source_files.items():
         assert _sha256(path.read_bytes()) == original_digests[art]
     for art, (payload, _) in originals.items():
         assert _sha256(payload) == original_digests[art]
 
-    # Normalized JSON content + referential join preserved.
     doc = json.loads(written_a[json_art].decode("utf-8"))
     assert doc["ticket"]["owner_email"] == maya.email
     assert doc["assignee_email"] == jordan.email
@@ -258,7 +282,6 @@ def test_json_csv_text_replay_preserves_relationships_and_schema(
     assert doc["ticket"]["watcher_id"] == maya.employee_id
     assert doc["ticket"]["owner_id"] == doc["ticket"]["watcher_id"]
 
-    # Schema integrity: re-extract transformed JSON/CSV; same field paths exist.
     re_json = extract_parts_for_media_type(
         artifact_version_id=json_art,
         media_type="application/json",
@@ -297,7 +320,6 @@ def test_json_csv_text_replay_preserves_relationships_and_schema(
     assert text_out.startswith("Contact ")
     assert text_out.endswith(" about ticket T-1.\n")
 
-    # Opaque plan artifacts must not embed synthetic cleartext values.
     for entry in plan_a.entries:
         payload = entry.to_dict()
         assert maya.email not in json.dumps(payload)
@@ -306,6 +328,7 @@ def test_json_csv_text_replay_preserves_relationships_and_schema(
 
 def test_exclude_artifact_is_not_copied_to_output() -> None:
     frozen = _freeze_two_people()
+    payload = b'{"blob":"secret"}\n'
     plan = plan_patches(
         frozen=frozen,
         requests=(
@@ -317,10 +340,16 @@ def test_exclude_artifact_is_not_copied_to_output() -> None:
                 action=PolicyAction.EXCLUDE,
             ),
         ),
+        artifact_scopes=(
+            ArtifactScope(
+                artifact_version_id="art-bin-1",
+                content_digest=content_digest_sha256(payload),
+            ),
+        ),
     )
     result = write_artifact(
         media_type="application/json",
-        original_payload=b'{"blob":"secret"}\n',
+        original_payload=payload,
         artifact_version_id="art-bin-1",
         plan=plan,
     )
@@ -328,8 +357,201 @@ def test_exclude_artifact_is_not_copied_to_output() -> None:
     assert result.payload == b""
 
 
+def test_write_artifact_default_denies_unscoped_and_digest_mismatch() -> None:
+    frozen = _freeze_two_people()
+    payload = b'{"owner_email":"maya@acme.example"}\n'
+    plan = plan_patches(
+        frozen=frozen,
+        requests=(),
+        artifact_scopes=(
+            ArtifactScope(
+                artifact_version_id="art-json-1",
+                content_digest=content_digest_sha256(payload),
+            ),
+        ),
+    )
+    # Affirmative no-op for scoped artifact.
+    ok = write_artifact(
+        media_type="application/json",
+        original_payload=payload,
+        artifact_version_id="art-json-1",
+        plan=plan,
+    )
+    assert not ok.excluded
+    assert json.loads(ok.payload.decode("utf-8")) == json.loads(payload.decode("utf-8"))
+
+    with pytest.raises(WriterError, match="not in the patch plan"):
+        write_artifact(
+            media_type="application/json",
+            original_payload=payload,
+            artifact_version_id="art-missing",
+            plan=plan,
+        )
+    with pytest.raises(WriterError, match="content digest mismatch"):
+        write_artifact(
+            media_type="application/json",
+            original_payload=b'{"owner_email":"other@acme.example"}\n',
+            artifact_version_id="art-json-1",
+            plan=plan,
+        )
+
+
+def test_json_root_sentinel_does_not_collide_with_value_key() -> None:
+    frozen = _freeze_two_people()
+    maya = frozen.profile_for_entity("ent-maya")
+    assert maya.email is not None
+
+    # Object with a real top-level "value" key must extract/write as that key.
+    object_payload = b'{"value":"maya@acme.example","id":"keep-me"}\n'
+    extracted = extract_json_parts(artifact_version_id="art-obj", payload=object_payload)
+    assert extracted.parse_error is None
+    paths = {tuple(part.original_locator.path) for part in extracted.parts}  # type: ignore[union-attr]
+    assert ("value",) in paths
+    assert (ROOT_SEGMENT,) not in paths
+
+    plan = plan_patches(
+        frozen=frozen,
+        requests=(
+            PatchRequest(
+                request_id="obj-value",
+                artifact_version_id="art-obj",
+                part_id="part-value",
+                locator=FieldPathLocator(path=("value",)),
+                action=PolicyAction.REPLACE,
+                entity_id="ent-maya",
+                attribute_key=ATTRIBUTE_EMAIL,
+            ),
+        ),
+        artifact_scopes=(
+            ArtifactScope(
+                artifact_version_id="art-obj",
+                content_digest=content_digest_sha256(object_payload),
+            ),
+        ),
+    )
+    out = write_artifact(
+        media_type="application/json",
+        original_payload=object_payload,
+        artifact_version_id="art-obj",
+        plan=plan,
+    ).payload
+    doc = json.loads(out.decode("utf-8"))
+    assert doc["value"] == maya.email
+    assert doc["id"] == "keep-me"
+
+    # Bare string document uses $root and round-trips as a string.
+    scalar_payload = b'"maya@acme.example"\n'
+    scalar_parts = extract_json_parts(artifact_version_id="art-scalar", payload=scalar_payload)
+    assert scalar_parts.parse_error is None
+    assert tuple(scalar_parts.parts[0].original_locator.path) == (ROOT_SEGMENT,)  # type: ignore[union-attr]
+
+    # NDJSON object with "value" key must not replace the whole line.
+    ndjson_payload = b'{"value":"maya@acme.example","id":1}\n'
+    ndjson_parts = extract_jsonl_parts(artifact_version_id="art-nd", payload=ndjson_payload)
+    assert ndjson_parts.parse_error is None
+    nd_paths = {tuple(part.original_locator.path) for part in ndjson_parts.parts}  # type: ignore[union-attr]
+    assert (0, "value") in nd_paths
+    assert (0, ROOT_SEGMENT) not in nd_paths
+
+    vault = build_replacement_vault({"attr-test-1": maya.email})
+    from cloakmill.domain.mapping import PatchPlanEntry
+
+    patched = write_jsonl_document(
+        original_payload=ndjson_payload,
+        patches=(
+            PatchPlanEntry(
+                opaque_id="patch-nd-1",
+                mapping_snapshot_id=frozen.snapshot.opaque_id,
+                artifact_version_id="art-nd",
+                part_id="part-nd-value",
+                locator=FieldPathLocator(path=(0, "value")),
+                action=PolicyAction.REPLACE,
+                entity_id="ent-maya",
+                replacement_ref="attr-test-1",
+            ),
+        ),
+        vault=vault,
+    )
+    line = json.loads(patched.decode("utf-8").splitlines()[0])
+    assert line == {"value": maya.email, "id": 1}
+
+
+def test_empty_key_and_dollar_keys_are_escaped() -> None:
+    payload = json.dumps({"": "a", "$empty_key": "b", "$root": "c", "ok": "d"}).encode()
+    result = extract_json_parts(artifact_version_id="art-keys", payload=payload)
+    assert result.parse_error is None
+    paths = {tuple(part.original_locator.path) for part in result.parts}  # type: ignore[union-attr]
+    assert (EMPTY_KEY_SEGMENT,) in paths
+    assert (f"{LITERAL_KEY_PREFIX}$empty_key",) in paths
+    assert (f"{LITERAL_KEY_PREFIX}$root",) in paths
+    assert ("ok",) in paths
+    assert (ROOT_SEGMENT,) not in paths
+
+    # Writer can patch the literal "$empty_key" property without touching "".
+    from cloakmill.domain.mapping import PatchPlanEntry
+
+    vault = build_replacement_vault({"attr-lit-1": "safe-lit"})
+    out = write_json_document(
+        original_payload=payload,
+        patches=(
+            PatchPlanEntry(
+                opaque_id="patch-lit-1",
+                mapping_snapshot_id="map-syn-1",
+                artifact_version_id="art-keys",
+                part_id="part-lit",
+                locator=FieldPathLocator(path=(f"{LITERAL_KEY_PREFIX}$empty_key",)),
+                action=PolicyAction.REPLACE,
+                entity_id="ent-maya",
+                replacement_ref="attr-lit-1",
+            ),
+        ),
+        vault=vault,
+    )
+    doc = json.loads(out.decode("utf-8"))
+    assert doc[""] == "a"
+    assert doc["$empty_key"] == "safe-lit"
+    assert doc["$root"] == "c"
+
+
+def test_duplicate_csv_headers_fail_closed() -> None:
+    payload = b"email,email\na@acme.example,b@acme.example\n"
+    extracted = extract_csv_parts(artifact_version_id="art-dup", payload=payload)
+    assert extracted.parts == ()
+    assert extracted.parse_error == "InvalidHeader"
+
+    frozen = _freeze_two_people()
+    plan = plan_patches(
+        frozen=frozen,
+        requests=(
+            PatchRequest(
+                request_id="dup-email",
+                artifact_version_id="art-dup",
+                part_id="part-dup",
+                locator=FieldPathLocator(path=("rows", 0, "email")),
+                action=PolicyAction.REPLACE,
+                entity_id="ent-maya",
+                attribute_key=ATTRIBUTE_EMAIL,
+            ),
+        ),
+        artifact_scopes=(
+            ArtifactScope(
+                artifact_version_id="art-dup",
+                content_digest=content_digest_sha256(payload),
+            ),
+        ),
+    )
+    with pytest.raises(WriterError, match="CSV header is invalid"):
+        write_artifact(
+            media_type="text/csv",
+            original_payload=payload,
+            artifact_version_id="art-dup",
+            plan=plan,
+        )
+
+
 def test_writer_refuses_injected_vault_mutation() -> None:
     frozen = _freeze_two_people()
+    payload = b"owner_email\nmaya@acme.example\n"
     plan = plan_patches(
         frozen=frozen,
         requests=(
@@ -343,12 +565,15 @@ def test_writer_refuses_injected_vault_mutation() -> None:
                 attribute_key=ATTRIBUTE_EMAIL,
             ),
         ),
+        artifact_scopes=(
+            ArtifactScope(
+                artifact_version_id="art-csv-1",
+                content_digest=content_digest_sha256(payload),
+            ),
+        ),
     )
-    # MappingProxyType vault values are immutable; ensure unsafe strings cannot be staged.
     with pytest.raises((TypeError, AttributeError)):
         plan.vault.values["attr-evil"] = "=1+2"  # type: ignore[index]
 
     with pytest.raises(UnsafeReplacementError):
-        from cloakmill.transforms import build_replacement_vault
-
         build_replacement_vault({"attr-evil-1": "=CMD('calc')"})

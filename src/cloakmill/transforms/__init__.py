@@ -8,9 +8,11 @@ from cloakmill.transforms.errors import (
 )
 from cloakmill.transforms.planner import (
     WRITER_VERSION,
+    ArtifactScope,
     PatchPlan,
     PatchRequest,
     ReferentialKeyRewrite,
+    content_digest_sha256,
     iter_replace_targets,
     patches_for_artifact,
     plan_patches,
@@ -42,6 +44,7 @@ __all__ = [
     "ATTRIBUTE_GIVEN_NAME",
     "ATTRIBUTE_ORGANIZATION_NAME",
     "WRITER_VERSION",
+    "ArtifactScope",
     "PatchConflictError",
     "PatchPlan",
     "PatchRequest",
@@ -53,6 +56,7 @@ __all__ = [
     "assert_safe_replacement",
     "attribute_key_for_entity_type",
     "build_replacement_vault",
+    "content_digest_sha256",
     "iter_replace_targets",
     "mint_replacement_ref",
     "patches_for_artifact",

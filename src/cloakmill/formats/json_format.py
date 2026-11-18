@@ -14,6 +14,10 @@ from cloakmill.formats.text_format import ExtractedParts
 
 # FieldPathLocator rejects empty string segments; encode JSON "" keys explicitly.
 EMPTY_KEY_SEGMENT = "$empty_key"
+# Bare JSON/JSONL scalar documents use this reserved root sentinel (not a real key).
+ROOT_SEGMENT = "$root"
+# Literal object keys that start with "$" (including sentinel names) are escaped.
+LITERAL_KEY_PREFIX = "$lit:"
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,12 +26,39 @@ class JsonExtractResult(ExtractedParts):
     skipped_leaves: int = 0
 
 
-def _encode_key(key: object) -> str | None:
+def encode_field_key(key: object) -> str | None:
+    """Encode a JSON object key into a FieldPathLocator segment.
+
+    Empty keys become ``EMPTY_KEY_SEGMENT``. Any key that starts with ``$`` is
+    prefixed with ``LITERAL_KEY_PREFIX`` so reserved sentinels never collide with
+    real property names.
+    """
     if not isinstance(key, str):
         return None
     if key == "":
         return EMPTY_KEY_SEGMENT
+    if key.startswith("$"):
+        return f"{LITERAL_KEY_PREFIX}{key}"
     return key
+
+
+def decode_field_key(segment: str) -> str:
+    """Decode a FieldPathLocator segment back to a JSON object key."""
+    if segment == EMPTY_KEY_SEGMENT:
+        return ""
+    if segment.startswith(LITERAL_KEY_PREFIX):
+        return segment[len(LITERAL_KEY_PREFIX) :]
+    return segment
+
+
+def is_root_scalar_path(path: tuple[str | int, ...]) -> bool:
+    """Return True when ``path`` addresses a bare JSON scalar document."""
+    return path == (ROOT_SEGMENT,)
+
+
+def is_jsonl_root_scalar_path(path: tuple[str | int, ...]) -> bool:
+    """Return True when ``path`` addresses a bare JSONL scalar line."""
+    return len(path) == 2 and isinstance(path[0], int) and path[1] == ROOT_SEGMENT
 
 
 def _scalar_text(value: object) -> str | None:
@@ -47,28 +78,41 @@ def _walk_values(
     path: tuple[str | int, ...],
     out: list[tuple[tuple[str | int, ...], str]],
     skipped: list[int],
-) -> None:
-    """Walk JSON values, emitting stringable leaves; count anything dropped."""
+) -> str | None:
+    """Walk JSON values, emitting stringable leaves; count anything dropped.
+
+    Returns an error code when encoded object-key segments collide within one
+    object (fail closed). Otherwise returns None.
+    """
     text = _scalar_text(value) if not isinstance(value, dict | list) else None
     if text is not None:
         if path:
             out.append((path, text))
         elif text != "":
-            out.append((("value",), text))
-        return
+            out.append(((ROOT_SEGMENT,), text))
+        return None
     if isinstance(value, list):
         for index, item in enumerate(value):
-            _walk_values(item, (*path, index), out, skipped)
-        return
+            error = _walk_values(item, (*path, index), out, skipped)
+            if error is not None:
+                return error
+        return None
     if isinstance(value, dict):
+        seen_encoded: set[str] = set()
         for key in sorted(value, key=lambda item: str(item)):
-            encoded = _encode_key(key)
+            encoded = encode_field_key(key)
             if encoded is None:
                 skipped[0] += 1
                 continue
-            _walk_values(value[key], (*path, encoded), out, skipped)
-        return
+            if encoded == ROOT_SEGMENT or encoded in seen_encoded:
+                return "EncodedKeyCollision"
+            seen_encoded.add(encoded)
+            error = _walk_values(value[key], (*path, encoded), out, skipped)
+            if error is not None:
+                return error
+        return None
     skipped[0] += 1
+    return None
 
 
 def _parts_from_leaves(
@@ -110,9 +154,11 @@ def extract_json_parts(
     skipped = [0]
     try:
         if isinstance(document, str):
-            leaves.append((("value",), document))
+            leaves.append(((ROOT_SEGMENT,), document))
         else:
-            _walk_values(document, (), leaves, skipped)
+            collision = _walk_values(document, (), leaves, skipped)
+            if collision is not None:
+                return JsonExtractResult(parts=(), parse_error=collision)
     except RecursionError:
         return JsonExtractResult(parts=(), parse_error="RecursionError")
 
@@ -158,9 +204,11 @@ def extract_jsonl_parts(
         skipped = [0]
         try:
             if isinstance(document, str):
-                leaves.append(((line_no, "value"), document))
+                leaves.append(((line_no, ROOT_SEGMENT), document))
             else:
-                _walk_values(document, (line_no,), leaves, skipped)
+                collision = _walk_values(document, (line_no,), leaves, skipped)
+                if collision is not None:
+                    return JsonExtractResult(parts=(), parse_error=collision)
         except RecursionError:
             return JsonExtractResult(parts=(), parse_error="RecursionError")
         total_skipped += skipped[0]
