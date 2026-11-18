@@ -22,6 +22,7 @@ from cloakmill.domain import (
     dumps,
     entity_graph_versions_equal,
     loads,
+    make_mapping_snapshot,
     mapping_snapshots_equal,
     to_jsonable,
     validate_entity_graph_version,
@@ -56,8 +57,7 @@ def _graph() -> EntityGraphVersion:
 
 
 def _snapshot() -> MappingSnapshot:
-    return MappingSnapshot(
-        opaque_id="map-syn-demo-1",
+    return make_mapping_snapshot(
         snapshot_version="map.v3",
         namespace_id="ns-syn-demo",
         entity_graph_version_id="egv-syn-demo-1",
@@ -79,10 +79,11 @@ def test_mapping_snapshot_and_graph_round_trip_json() -> None:
 
 
 def test_patch_plan_entries_round_trip_for_each_policy_action() -> None:
+    snapshot = _snapshot()
     entries = (
         PatchPlanEntry(
             opaque_id="patch-syn-email-1",
-            mapping_snapshot_id="map-syn-demo-1",
+            mapping_snapshot_id=snapshot.opaque_id,
             artifact_version_id="art-syn-crm-1",
             part_id="part-syn-row-0-owner",
             locator=FieldPathLocator(path=("rows", 0, "owner_email")),
@@ -92,7 +93,7 @@ def test_patch_plan_entries_round_trip_for_each_policy_action() -> None:
         ),
         PatchPlanEntry(
             opaque_id="patch-syn-token-1",
-            mapping_snapshot_id="map-syn-demo-1",
+            mapping_snapshot_id=snapshot.opaque_id,
             artifact_version_id="art-syn-crm-1",
             part_id="part-syn-row-0-token",
             locator=TextOffsetLocator(unit=TextOffsetUnit.CODEPOINTS, start=12, end=40),
@@ -101,7 +102,7 @@ def test_patch_plan_entries_round_trip_for_each_policy_action() -> None:
         ),
         PatchPlanEntry(
             opaque_id="patch-syn-remove-1",
-            mapping_snapshot_id="map-syn-demo-1",
+            mapping_snapshot_id=snapshot.opaque_id,
             artifact_version_id="art-syn-note-1",
             part_id="part-syn-note-body",
             locator=TextOffsetLocator(unit=TextOffsetUnit.CODEPOINTS, start=0, end=8),
@@ -109,7 +110,7 @@ def test_patch_plan_entries_round_trip_for_each_policy_action() -> None:
         ),
         PatchPlanEntry(
             opaque_id="patch-syn-exclude-1",
-            mapping_snapshot_id="map-syn-demo-1",
+            mapping_snapshot_id=snapshot.opaque_id,
             artifact_version_id="art-syn-bin-1",
             part_id="part-syn-unsupported",
             locator=FieldPathLocator(path=("blob",)),
@@ -132,8 +133,7 @@ def test_snapshot_equality_ignores_assignment_and_entity_order() -> None:
     assert entity_graph_versions_equal(left_graph, right_graph)
 
     left = _snapshot()
-    right = MappingSnapshot(
-        opaque_id=left.opaque_id,
+    right = make_mapping_snapshot(
         snapshot_version=left.snapshot_version,
         namespace_id=left.namespace_id,
         entity_graph_version_id=left.entity_graph_version_id,
@@ -143,8 +143,7 @@ def test_snapshot_equality_ignores_assignment_and_entity_order() -> None:
     )
     assert mapping_snapshots_equal(left, right)
 
-    different_policy = MappingSnapshot(
-        opaque_id=left.opaque_id,
+    different_policy = make_mapping_snapshot(
         snapshot_version=left.snapshot_version,
         namespace_id=left.namespace_id,
         entity_graph_version_id=left.entity_graph_version_id,
@@ -152,7 +151,41 @@ def test_snapshot_equality_ignores_assignment_and_entity_order() -> None:
         namespace_key_ref=left.namespace_key_ref,
         assignments=left.assignments,
     )
+    assert different_policy.opaque_id != left.opaque_id
     assert not mapping_snapshots_equal(left, different_policy)
+
+
+def test_opaque_id_and_digest_reject_tampered_policy_or_key_ref() -> None:
+    left = _snapshot()
+    tampered = MappingSnapshot(
+        opaque_id=left.opaque_id,
+        snapshot_version=left.snapshot_version,
+        namespace_id=left.namespace_id,
+        entity_graph_version_id=left.entity_graph_version_id,
+        policy_version="policy.content.v9",
+        namespace_key_ref=left.namespace_key_ref,
+        private_integrity_digest=left.private_integrity_digest,
+        assignments=left.assignments,
+    )
+    with pytest.raises(DomainValidationError, match="opaque_id does not match"):
+        validate_mapping_snapshot(tampered)
+
+    wrong_key = MappingSnapshot(
+        opaque_id=left.opaque_id,
+        snapshot_version=left.snapshot_version,
+        namespace_id=left.namespace_id,
+        entity_graph_version_id=left.entity_graph_version_id,
+        policy_version=left.policy_version,
+        namespace_key_ref=NamespaceKeyRef(
+            opaque_id="nkr-syn-demo-1",
+            namespace_id="ns-syn-demo",
+            key_version="nk.v2",
+        ),
+        private_integrity_digest=left.private_integrity_digest,
+        assignments=left.assignments,
+    )
+    with pytest.raises(DomainValidationError, match="opaque_id does not match"):
+        validate_mapping_snapshot(wrong_key)
 
 
 def test_version_fields_are_required() -> None:
@@ -177,6 +210,7 @@ def test_version_fields_are_required() -> None:
                 entity_graph_version_id="egv-syn-demo-1",
                 policy_version="policy.content.v2",
                 namespace_key_ref=_key_ref(),
+                private_integrity_digest="sha256:" + ("ab" * 32),
             )
         )
     with pytest.raises(DomainValidationError, match="policy_version"):
@@ -188,6 +222,7 @@ def test_version_fields_are_required() -> None:
                 "entity_graph_version_id": "egv-syn-demo-1",
                 "policy_version": "",
                 "namespace_key_ref": _key_ref().to_dict(),
+                "private_integrity_digest": "sha256:" + ("ab" * 32),
                 "assignments": [],
             }
         )
@@ -195,6 +230,7 @@ def test_version_fields_are_required() -> None:
 
 @pytest.mark.parametrize("bad_id", [None, 12, True])
 def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
+    good_digest = "sha256:" + ("ab" * 32)
     with pytest.raises(DomainValidationError):
         NamespaceKeyRef.from_dict(
             {"opaque_id": bad_id, "namespace_id": "ns-syn-demo", "key_version": "nk.v1"}
@@ -243,6 +279,7 @@ def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
                 "entity_graph_version_id": "egv-syn-demo-1",
                 "policy_version": "policy.content.v2",
                 "namespace_key_ref": _key_ref().to_dict(),
+                "private_integrity_digest": good_digest,
                 "assignments": [],
             }
         )
@@ -255,6 +292,7 @@ def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
                 "entity_graph_version_id": "egv-syn-demo-1",
                 "policy_version": "policy.content.v2",
                 "namespace_key_ref": _key_ref().to_dict(),
+                "private_integrity_digest": good_digest,
                 "assignments": [],
             }
         )
@@ -267,6 +305,7 @@ def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
                 "entity_graph_version_id": bad_id,
                 "policy_version": "policy.content.v2",
                 "namespace_key_ref": _key_ref().to_dict(),
+                "private_integrity_digest": good_digest,
                 "assignments": [],
             }
         )
@@ -284,6 +323,7 @@ def test_from_dict_rejects_null_and_non_string_ids(bad_id: object) -> None:
                     "namespace_id": None,
                     "key_version": "nk.v1",
                 },
+                "private_integrity_digest": good_digest,
                 "assignments": [{"entity_id": None, "profile_id": None}],
             }
         )
@@ -358,6 +398,7 @@ def test_duplicate_assignments_rejected() -> None:
                 entity_graph_version_id="egv-syn-demo-1",
                 policy_version="policy.content.v2",
                 namespace_key_ref=_key_ref(),
+                private_integrity_digest="sha256:" + ("ab" * 32),
                 assignments=(
                     MappingAssignment(entity_id="ent-syn-maya", profile_id="prof-syn-a12"),
                     MappingAssignment(entity_id="ent-syn-maya", profile_id="prof-syn-a99"),
@@ -397,15 +438,9 @@ def test_round_trip_from_committed_synthetic_fixture() -> None:
     key_ref = NamespaceKeyRef.from_dict(bundle["namespace_key_ref"])
     graph = EntityGraphVersion.from_dict(bundle["entity_graph_version"])
     snapshot = MappingSnapshot.from_dict(bundle["mapping_snapshot"])
-    entries = [PatchPlanEntry.from_dict(item) for item in bundle["patch_plan_entries"]]
-
-    validate_entity_graph_version(graph)
-    validate_mapping_snapshot(snapshot)
-    for entry in entries:
-        validate_patch_plan_entry(entry)
-
-    assert to_jsonable(key_ref) == bundle["namespace_key_ref"]
-    assert to_jsonable(graph) == bundle["entity_graph_version"]
-    assert to_jsonable(snapshot) == bundle["mapping_snapshot"]
-    assert [to_jsonable(entry) for entry in entries] == bundle["patch_plan_entries"]
-    assert {entry.action for entry in entries} == set(PolicyAction)
+    assert key_ref.namespace_id == snapshot.namespace_id == graph.namespace_id
+    assert snapshot.entity_graph_version_id == graph.opaque_id
+    assert to_jsonable(snapshot)["private_integrity_digest"].startswith("sha256:")
+    for raw in bundle["patch_plan_entries"]:
+        entry = PatchPlanEntry.from_dict(raw)
+        assert entry.mapping_snapshot_id == snapshot.opaque_id

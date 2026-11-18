@@ -8,10 +8,13 @@
     "opaque_id": "egv-syn-demo-1",
     "graph_version": "graph.v3",
     "namespace_id": "ns-syn-demo",
-    "entity_ids": ["ent-syn-maya", "ent-syn-shared-mailbox"]
+    "entity_ids": [
+      "ent-syn-maya",
+      "ent-syn-shared-mailbox"
+    ]
   },
   "mapping_snapshot": {
-    "opaque_id": "map-syn-demo-1",
+    "opaque_id": "map-e968af3fd98125404646326d",
     "snapshot_version": "map.v3",
     "namespace_id": "ns-syn-demo",
     "entity_graph_version_id": "egv-syn-demo-1",
@@ -21,6 +24,7 @@
       "namespace_id": "ns-syn-demo",
       "key_version": "nk.v1"
     },
+    "private_integrity_digest": "sha256:e968af3fd98125404646326dba9b2280b07c4a7df3984c2497de4a9ab053cb79",
     "assignments": [
       {
         "entity_id": "ent-syn-maya",
@@ -35,12 +39,16 @@
   "patch_plan_entries": [
     {
       "opaque_id": "patch-syn-email-1",
-      "mapping_snapshot_id": "map-syn-demo-1",
+      "mapping_snapshot_id": "map-e968af3fd98125404646326d",
       "artifact_version_id": "art-syn-crm-1",
       "part_id": "part-syn-row-0-owner",
       "locator": {
         "kind": "field_path",
-        "path": ["rows", 0, "owner_email"]
+        "path": [
+          "rows",
+          0,
+          "owner_email"
+        ]
       },
       "action": "replace",
       "entity_id": "ent-syn-maya",
@@ -48,7 +56,7 @@
     },
     {
       "opaque_id": "patch-syn-token-1",
-      "mapping_snapshot_id": "map-syn-demo-1",
+      "mapping_snapshot_id": "map-e968af3fd98125404646326d",
       "artifact_version_id": "art-syn-crm-1",
       "part_id": "part-syn-row-0-token",
       "locator": {
@@ -62,7 +70,7 @@
     },
     {
       "opaque_id": "patch-syn-remove-1",
-      "mapping_snapshot_id": "map-syn-demo-1",
+      "mapping_snapshot_id": "map-e968af3fd98125404646326d",
       "artifact_version_id": "art-syn-note-1",
       "part_id": "part-syn-note-body",
       "locator": {
@@ -75,12 +83,14 @@
     },
     {
       "opaque_id": "patch-syn-exclude-1",
-      "mapping_snapshot_id": "map-syn-demo-1",
+      "mapping_snapshot_id": "map-e968af3fd98125404646326d",
       "artifact_version_id": "art-syn-bin-1",
       "part_id": "part-syn-unsupported",
       "locator": {
         "kind": "field_path",
-        "path": ["blob"]
+        "path": [
+          "blob"
+        ]
       },
       "action": "exclude"
     }

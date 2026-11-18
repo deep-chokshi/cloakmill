@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from cloakmill.domain import EntityKind, NamespaceKeyRef
@@ -13,12 +15,15 @@ from cloakmill.identity import (
     AssignmentError,
     FrozenMappingError,
     FrozenMappingStore,
+    MentionEvidence,
     NamespaceKeyMaterial,
     NamespaceScope,
     NamespaceScopedProfileAssigner,
     StrongAnchor,
+    StrongAnchorIdentityResolver,
     SyntheticProfile,
     assert_frozen_immutable,
+    entity_opaque_id,
     freeze_mapping,
     frozen_bundles_equal,
     opaque_anchor_ref,
@@ -85,9 +90,29 @@ def test_same_entity_gets_same_profile_within_namespace() -> None:
     assert profile.full_name == f"{profile.given_name} {profile.family_name}"
     assert profile.email is not None and profile.email.endswith("@profiles.example")
     assert profile.employee_id is not None and profile.employee_id.startswith("E-")
-    # Frozen mapping artifacts must not embed strong-anchor cleartext.
-    assert "strong_anchors" not in first.snapshot.to_dict()
-    assert "normalized_value" not in first.to_dict()
+    # Release export omits profile vault; snapshot carries integrity commitment.
+    export = first.to_export_dict()
+    assert "profiles" not in export
+    assert "strong_anchors" not in export["snapshot"]
+    assert "normalized_value" not in export
+    assert export["snapshot"]["private_integrity_digest"].startswith("sha256:")
+    vault = first.to_vault_dict()
+    assert "profiles" in vault
+    assert "snapshot" not in vault
+
+
+def test_namespace_key_material_repr_redacts_bytes() -> None:
+    key = _key(_scope())
+    rendered = repr(key)
+    assert key.key_bytes not in rendered.encode("utf-8")
+    assert b"synthetic-test-key-material" not in rendered.encode("utf-8")
+    assert "<redacted:" in rendered
+    assert key.key_ref.opaque_id in rendered
+    assert "nk.v1" in rendered
+    assert str(key) == rendered
+    with pytest.raises(AssignmentError) as exc_info:
+        raise AssignmentError(f"failed with material {key!r}")
+    assert b"synthetic-test-key-material" not in str(exc_info.value).encode("utf-8")
 
 
 def test_distinct_entities_do_not_collide_on_unique_attrs() -> None:
@@ -302,12 +327,11 @@ def test_optional_anchors_are_ignored_by_assignment() -> None:
             snapshot_version="map.v1",
         )
     )
-    dumped = bundle.to_dict()
-    assert "maya@acme.example" not in str(dumped)
-    assert "normalized_value" not in str(dumped)
-    # Assignment freeze vault does not embed graph strong_anchors.
-    assert "strong_anchors" not in dumped["snapshot"]
-    assert "opaque_ref" not in str(dumped)
+    export = bundle.to_export_dict()
+    assert "maya@acme.example" not in str(export)
+    assert "normalized_value" not in str(export)
+    assert "profiles" not in export
+    assert "strong_anchors" not in export["snapshot"]
 
 
 def test_empty_graph_freeze_assert_immutable_returns_cleanly() -> None:
@@ -330,3 +354,62 @@ def test_empty_graph_freeze_assert_immutable_returns_cleanly() -> None:
     assert bundle.profiles == ()
     assert bundle.assignments == ()
     assert_frozen_immutable(bundle)
+
+
+def test_resolved_entity_ids_are_not_invertible_without_namespace_secret() -> None:
+    """HMAC-keyed entity ids cannot be recomputed from candidate anchors without the secret."""
+    scope = _scope()
+    secret = b"synthetic-test-key-material"
+    mention = MentionEvidence(
+        observation_id="obs-maya",
+        entity_type="email_address",
+        normalized_value="maya@acme.example",
+        part_id="part-1",
+        artifact_version_id="art-1",
+    )
+    result = StrongAnchorIdentityResolver().resolve(
+        [mention],
+        namespace_id=scope.namespace_id,
+        namespace_secret=secret,
+    )
+    entity_id = result.graph.entities[0].opaque_id
+    # Unkeyed truncated SHA-256 of public inputs must not match the keyed entity id.
+    unkeyed = hashlib.sha256(
+        "\0".join(
+            (
+                scope.namespace_id,
+                EntityKind.PERSON.value,
+                AnchorKind.EMAIL.value,
+                "maya@acme.example",
+            )
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+    assert unkeyed not in entity_id
+    # Wrong secret yields a different keyed id for the same cleartext candidate.
+    wrong = entity_opaque_id(
+        entity_kind=EntityKind.PERSON,
+        seed_anchor_kind=AnchorKind.EMAIL,
+        seed_value="maya@acme.example",
+        namespace_id=scope.namespace_id,
+        namespace_secret=b"different-secret-xx",
+    )
+    assert wrong != entity_id
+    # Correct secret reconstructs the id; export still omits profiles.
+    expected = entity_opaque_id(
+        entity_kind=EntityKind.PERSON,
+        seed_anchor_kind=AnchorKind.EMAIL,
+        seed_value="maya@acme.example",
+        namespace_id=scope.namespace_id,
+        namespace_secret=secret,
+    )
+    assert expected == entity_id
+    bundle = freeze_mapping(
+        NamespaceScopedProfileAssigner().assign(
+            graph=result.graph,
+            namespace=scope,
+            key_material=_key(scope),
+            snapshot_version="map.v1",
+        )
+    )
+    assert "profiles" not in bundle.to_dict()
+    assert "maya@acme.example" not in str(bundle.to_export_dict())

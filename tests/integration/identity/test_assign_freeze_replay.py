@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from cloakmill.domain import EntityKind, NamespaceKeyRef
 from cloakmill.domain.enums import AnchorKind
 from cloakmill.identity import (
@@ -12,6 +14,7 @@ from cloakmill.identity import (
     NamespaceScope,
     NamespaceScopedProfileAssigner,
     StrongAnchorIdentityResolver,
+    entity_opaque_id,
     freeze_mapping,
     frozen_bundles_equal,
 )
@@ -156,10 +159,34 @@ def test_resolve_assign_freeze_incremental_and_collision() -> None:
             for attr, value in new_profile.unique_attributes().items():
                 assert prior.unique_attributes().get(attr) != value
 
-    # Frozen mapping dump stays free of source-anchor cleartext.
-    dumped = frozen_v2.to_dict()
-    assert "maya@acme.example" not in str(dumped)
-    assert "jordan@acme.example" not in str(dumped)
-    assert "E-AB12CD" not in str(dumped)
+    # Release export stays free of source cleartext and profile vault.
+    export = frozen_v2.to_export_dict()
+    assert "profiles" not in export
+    assert "maya@acme.example" not in str(export)
+    assert "jordan@acme.example" not in str(export)
+    assert "E-AB12CD" not in str(export)
+    assert export["snapshot"]["private_integrity_digest"].startswith("sha256:")
+    # Entity ids are not recoverable via unkeyed digests of candidate anchors.
+    for candidate in ("maya@acme.example", "jordan@acme.example", "E-AB12CD", "AC-104"):
+        unkeyed = hashlib.sha256(
+            "\0".join(
+                (
+                    scope.namespace_id,
+                    EntityKind.PERSON.value,
+                    "email",
+                    candidate,
+                )
+            ).encode("utf-8")
+        ).hexdigest()[:24]
+        assert all(unkeyed not in entity_id for entity_id in graph_v2.entity_ids)
+        wrong = entity_opaque_id(
+            entity_kind=EntityKind.PERSON,
+            seed_anchor_kind=AnchorKind.EMAIL,
+            seed_value=candidate,
+            namespace_id=scope.namespace_id,
+            namespace_secret=b"different-secret-xx",
+        )
+        assert wrong not in graph_v2.entity_ids
+
     store.put(frozen_v2)
     assert store.get(frozen_v2.snapshot.opaque_id) == frozen_v2
