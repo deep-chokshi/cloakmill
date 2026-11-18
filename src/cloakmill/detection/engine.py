@@ -127,11 +127,15 @@ class DiscoveryEngine:
             languages=languages,
         )
         candidates: list[CandidateObservation] = []
+        recognizer_exception_review = False
         for recognizer in recognizers:
             produced = recognizer.recognize(
                 part,
                 part_input.content,
                 field_name=part_input.field_name,
+            )
+            recognizer_exception_review = (
+                recognizer_exception_review or recognizer.exception_review_required()
             )
             for candidate in produced:
                 if entity_types is not None and candidate.entity_type not in entity_types:
@@ -151,7 +155,9 @@ class DiscoveryEngine:
             rejected=validation.rejected,
             conflicts=validation.conflicts,
             skipped=False,
-            requires_exception_review=validation.requires_exception_review or weak_schema,
+            requires_exception_review=(
+                validation.requires_exception_review or weak_schema or recognizer_exception_review
+            ),
         )
 
 

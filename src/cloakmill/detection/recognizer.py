@@ -53,3 +53,11 @@ class RuleRecognizer(ABC):
         ``field_name`` is the leaf structured-field name when known (for schema
         hints). Locators must refer to the immutable content coordinate system.
         """
+
+    def exception_review_required(self) -> bool:
+        """True when the last ``recognize`` pass left unresolved sensitive material.
+
+        Default is false. Checksum recognizers may set this when card-length
+        digit runs remain uncovered after Luhn window search.
+        """
+        return False

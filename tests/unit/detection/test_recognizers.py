@@ -129,6 +129,7 @@ def test_payment_card_requires_luhn_checksum() -> None:
 
     invalid_hits = recognizer.recognize(_text_part(invalid), invalid)
     assert invalid_hits == ()
+    assert recognizer.exception_review_required() is True
 
 
 def test_payment_card_recovers_from_greedy_nearby_digit_merge() -> None:
@@ -168,6 +169,44 @@ def test_payment_card_recovers_from_greedy_trailing_expiry_prefix() -> None:
     locator = hits[0].evidence_locator
     assert isinstance(locator, TextOffsetLocator)
     assert text[locator.start : locator.end] == "4111111111111111"
+
+
+def test_payment_card_recovers_glued_leading_numeric_prefix() -> None:
+    # Interior window: leading digits glued with no separator must not hide the PAN.
+    text = "ref 994111111111111111 paid"
+    recognizer = PaymentCardRecognizer()
+    hits = recognizer.recognize(_text_part(text), text)
+    assert len(hits) == 1
+    locator = hits[0].evidence_locator
+    assert isinstance(locator, TextOffsetLocator)
+    assert text[locator.start : locator.end] == "4111111111111111"
+    assert recognizer.exception_review_required() is False
+
+
+def test_payment_card_covers_concatenated_luhn_pans() -> None:
+    # Two Luhn-valid PANs in one digit run: both exact spans must be emitted.
+    first = "4111111111111111"
+    second = "5500000000000004"
+    text = f"bundle {first}{second} end"
+    recognizer = PaymentCardRecognizer()
+    hits = recognizer.recognize(_text_part(text), text)
+    assert len(hits) == 2
+    spans: list[str] = []
+    for hit in hits:
+        locator = hit.evidence_locator
+        assert isinstance(locator, TextOffsetLocator)
+        spans.append(text[locator.start : locator.end])
+    assert sorted(spans) == sorted([first, second])
+    assert recognizer.exception_review_required() is False
+
+
+def test_payment_card_flags_exception_when_card_length_residual_uncovered() -> None:
+    # Non-Luhn 16-digit run: no observation, but residual requires exception review.
+    text = "card 4111111111111112 rejected"
+    recognizer = PaymentCardRecognizer()
+    hits = recognizer.recognize(_text_part(text), text)
+    assert hits == ()
+    assert recognizer.exception_review_required() is True
 
 
 def test_schema_field_recognizer_uses_field_path_evidence() -> None:

@@ -14,9 +14,10 @@ from cloakmill.detection import (
     build_default_catalog,
     default_field_name,
 )
-from cloakmill.detection.entity_types import EMAIL_ADDRESS, EMPLOYEE_ID
+from cloakmill.detection.entity_types import EMAIL_ADDRESS, EMPLOYEE_ID, PAYMENT_CARD
 from cloakmill.detection.recognizer import RecognizerCapability, RuleRecognizer
 from cloakmill.detection.recognizers.email import EmailRecognizer
+from cloakmill.detection.recognizers.payment_card import PaymentCardRecognizer
 from cloakmill.domain import (
     CoverageState,
     DomainValidationError,
@@ -176,3 +177,22 @@ def test_detection_does_not_import_eval_fixtures() -> None:
 def test_default_catalog_registers_email_recognizer() -> None:
     catalog = RecognizerCatalog((EmailRecognizer(),))
     assert catalog.get("rule.email").capability.version == "1.0.0"
+
+
+def test_engine_flags_exception_review_for_uncovered_card_length_run() -> None:
+    text = "card 4111111111111112 rejected"
+    part = _text_part(text)
+    engine = DiscoveryEngine(RecognizerCatalog((PaymentCardRecognizer(),)))
+    result = engine.discover([PartInput(part=part, content=text)])
+    assert result.observations == ()
+    assert result.requires_exception_review is True
+
+
+def test_engine_accepts_interior_payment_card_without_exception() -> None:
+    text = "ref 994111111111111111 paid"
+    part = _text_part(text)
+    engine = DiscoveryEngine(RecognizerCatalog((PaymentCardRecognizer(),)))
+    result = engine.discover([PartInput(part=part, content=text)])
+    assert len(result.observations) == 1
+    assert result.observations[0].entity_type == PAYMENT_CARD
+    assert result.requires_exception_review is False
