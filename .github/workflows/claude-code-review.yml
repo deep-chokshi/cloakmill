@@ -33,6 +33,10 @@ jobs:
           # Post with this job's token. The Claude App's token is refused on any PR
           # that edits this file, which would silently skip the review there.
           github_token: ${{ github.token }}
+          # Cursor agent PRs are opened/pushed by cursor[bot]. Without this, the
+          # action rejects non-human actors (error names the actor as "cursor").
+          # Matching strips a trailing [bot], so one spelling is enough.
+          allowed_bots: "cursor[bot]"
           plugin_marketplaces: "https://github.com/anthropics/claude-plugins-official.git"
           plugins: "code-review@claude-plugins-official"
           prompt: "/code-review:code-review --comment ${{ github.repository }}/pull/${{ github.event.pull_request.number }}"
